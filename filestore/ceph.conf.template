@@ -1,0 +1,195 @@
+[global]
+    fsid = _FSID_
+    public network = _PUBLIC_NETWORK_
+    cluster network = _CLUSTER_NETWORK_
+    #for auth and crc
+    auth_cluster_required = none
+    auth_service_required = none
+    auth_client_required = none
+    auth_supported = none
+    cephx_sign_messages = false
+    cephx_require_signatures = false
+    ms_nocrc = true
+
+    max_open_files = 131072
+
+    #for debug
+    debug_lockdep = 0/0
+    debug_context = 0/0
+    debug_crush = 0/0
+    debug_buffer = 0/0
+    debug_timer = 0/0
+    debug_filer = 0/0
+    debug_objecter = 0/0
+    debug_rados = 0/0
+    debug_rbd = 0/0
+    debug_ms = 0/0
+    debug_monc = 0/0
+    debug_tp = 0/0
+    debug_auth = 0/0
+    debug_finisher = 0/0
+    debug_heartbeatmap = 0/0
+    debug_perfcounter = 0/0
+    debug_asok = 0/0
+    debug_throttle = 0/0
+    debug_mon = 0/0
+    debug_paxos = 0/0
+    debug_rgw = 0/0
+
+    #for perf counter
+    perf = true
+    mutex_perf_counter = true
+    throttler_perf_counter = false
+
+    mon_osd_max_split_count = 4096
+    mon_pg_warn_max_per_osd = 10000
+
+    #for pg
+    osd_pool_default_pg_num = 32768
+    osd_pool_default_pgp_num = 32768
+
+    #for replica
+    osd_pool_default_size = 3
+    osd_pool_default_min_size = 2
+
+
+    #for messager
+    ms_type = async
+
+    #for capacity ratio
+    mon_osd_full_ratio=0.9
+    mon_osd_nearfull_ratio=0.85
+
+    #for OSD Down out
+    mon_osd_down_out_interval=43200
+[mon]
+    #mon initial members = _MON_INITIAL_MEMBERS_
+    mon_max_pool_pg_num=166496
+    mon_osd_max_split_count = 10000
+    mon_pg_warn_max_per_osd = 10000
+    mon_min_osdmap_epochs=100
+    mon_compact_on_start=true
+    mon_compact_on_trim=true
+[osd]
+    #for pg log
+    osd_min_pg_log_entries = 30000
+    osd_max_pg_log_entries = 100000
+    osd_op_log_threshold = 50
+
+    osd_pg_bits = 8
+    osd_pgp_bits = 8
+    osd_op_num_threads_per_shard = 1
+    osd_op_num_shards = 8
+
+    #xfs option
+    osd_mkfs_type = xfs
+    osd_mkfs_options_xfs = -f -i size=2048
+    osd_mount_options_xfs = rw,noatime,inode64,logbsize=256k,delaylog
+
+    #for threads
+    osd_op_threads = 6
+    filestore_op_threads = 3
+
+    #for map
+    osd_map_cache_size = 1024
+    osd_map_cache_bl_size = 128
+
+    #for journal dio
+    journal_dio = true
+    journal_aio = true
+
+    #for journal config
+    osd_journal_size = 204800
+    journal_max_write_entries=100000
+    journal_max_write_bytes=2097152000
+    journal_queue_max_ops=100000
+    journal_queue_max_bytes=2097152000
+
+    #for io submit throttle
+    objecter_infilght_op_bytes=2097152000
+    objecter_inflight_ops=102400
+    #ms_dispatch_throttle_bytes=2097152000
+    ms_dispatch_throttle_bytes=0
+
+
+    #for filestore fd cache
+    filestore_fd_cache_size = 1024
+    filestore_fd_cache_shards = 32
+    filestore_omap_header_cache_size=10240
+    osd_pg_object_context_cache_count=1024
+
+
+    #for filestore queue
+    osd_max_write_size = 5120
+    filestore_queue_max_ops=100000
+    filestore_queue_max_bytes=2097152000
+    filestore_queue_committing_max_ops=100000
+    filestore_queue_committing_max_bytes=2097152000
+
+    #for sync
+    filestore_max_sync_interval=0.3
+    filestore_min_sync_interval=0.1
+    filestore_journal_parallel = false
+    filestore_journal_writeahead = true
+    filestore_odsync_write=false
+
+    #for client message
+    osd_client_message_size_cap = 0
+    osd_client_message_cap = 0
+
+    #for tracker
+    osd_enable_op_tracker = false
+
+    #for wbthrottle
+    filestore_wbthrottle_enable=false
+    filestore_wbthrottle_xfs_bytes_start_flusher = 5242880000
+    filestore_wbthrottle_xfs_bytes_hard_limit = 5242880000
+    filestore_wbthrottle_xfs_indoes_start_flusher = 50000
+    filestore_wbthrottle_xfs_indoes_hard_limit = 50000
+    filestore_wbthrottle_xfs_ios_start_flusher = 50000
+    filestore_wbthrottle_xfs_ios_hard_limit = 500000
+
+    #for leveldb
+    leveldb_write_buffer_size=67108864
+    leveldb_cache_size=536870912
+    leveldb_block_size=0
+    leveldb_max_open_files=0
+    leveldb_compression=false
+    leveldb_compact_on_mount=false
+
+    #for recovery
+    osd_recovery_threads=1
+    osd_recovery_max_chunk=16777216
+    osd_recovery_max_active=6
+    osd_recovery_op_priority=3
+
+    #for backfill
+    osd_max_backfills=1
+    osd_backfill_scan_min=64
+    osd_backfill_scan_max=512
+    osd_backfill_full_ratio=0.9
+
+
+    #for scrub
+    osd_max_scrubs=1
+    osd_scrub_during_recovery=true
+    osd_scrub_begin_hour=1
+    osd_scrub_end_hour=6
+    osd_scrub_load_threshold=0.5
+    osd_scrub_min_interval=86400
+    osd_scrub_max_interval=604800
+    osd_scrub_interval_randomize_ratio=0.5
+    osd_scrub_chunk_min=5
+    osd_scrub_chunk_max=25
+    osd_scrub_sleep=0
+    osd_scrub_auto_repair=false
+    osd_scrub_auto_repair_num_errors=5
+    osd_deep_scrub_interval=604800
+    osd_deep_scrub_randomize_ratio=0.15
+    osd_deep_scrub_stride=524288
+    osd_deep_scrub_update_digest_min_age=7200
+    osd_scrub_priority=5
+    osd_scrub_cost=52428800
+[client]
+    rbd_cache = false
+    admin socket = /var/run/ceph/$cluster-$type.$id.$pid.$cctid.asok
