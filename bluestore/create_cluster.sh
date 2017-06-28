@@ -356,15 +356,15 @@ function parse_and_check_params()
 function set_conf()
 {
 	#assert: the current machine is a node
-	mkdir -p $conf_dir
-	cp $ceph_conf_tpl $ceph_conf
+	sudo mkdir -p $conf_dir
+	sudo cp $ceph_conf_tpl $ceph_conf
 	fsid=$(uuidgen)
 
 	#192.168.28.107/24 -> 192.168.28.0/24
 	local conv_pub_net=$(echo $public_ip|awk -F/ '{print $1"."$2}' |awk -F. '{print $1"."$2"."$3"."0"/"$5}')
-	conv_pub_net=$(echo $conv_pub_net| sed 's#\/#\\\/#g')
+	conv_pub_net=$(echo $conv_pub_net| sudo sed 's#\/#\\\/#g')
 	local conv_clst_net=$(echo $cluster_ip|awk -F/ '{print $1"."$2}' |awk -F. '{print $1"."$2"."$3"."0"/"$5}')
-	conv_clst_net=$(echo $conv_clst_net| sed 's#\/#\\\/#g')
+	conv_clst_net=$(echo $conv_clst_net| sudo sed 's#\/#\\\/#g')
 
 	add_log "INFO" "fsid=$fsid"
 	add_log "INFO" "conv_pub_net=$conv_pub_net"
@@ -377,22 +377,22 @@ function set_conf()
 
 	if grep $tpl_fsid $ceph_conf > /dev/null
 	then
-		sed -i "s/$tpl_fsid/$fsid/" $ceph_conf
+		sudo sed -i "s/$tpl_fsid/$fsid/" $ceph_conf
 	fi
 
 	if grep $tpl_inimb $ceph_conf > /dev/null
 	then
-		sed -i "s/$tpl_inimb/$mon_init_memb/" $ceph_conf
+		sudo sed -i "s/$tpl_inimb/$mon_init_memb/" $ceph_conf
 	fi
 	
 	if grep $tpl_pubnet $ceph_conf > /dev/null
 	then
-		sed -i "s/$tpl_pubnet/$conv_pub_net/" $ceph_conf
+		sudo sed -i "s/$tpl_pubnet/$conv_pub_net/" $ceph_conf
 	fi
 
 	if grep $tpl_clstnet $ceph_conf > /dev/null
 	then
-		sed -i "s/$tpl_clstnet/$conv_clst_net/" $ceph_conf
+		sudo sed -i "s/$tpl_clstnet/$conv_clst_net/" $ceph_conf
 	fi
 }
 

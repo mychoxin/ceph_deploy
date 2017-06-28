@@ -5,7 +5,7 @@ set -e
 SHELL_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 source $SHELL_DIR/common_fun
 
-mkdir "$mon_dir" -p
+sudo mkdir "$mon_dir" -p
 
 clear_log
 add_log "INFO" "$hostname: local creating monitor..."
@@ -101,16 +101,16 @@ function set_conf()
 	fi
 
 	local line_sec_mon="\[mon.$mon_id\]"
-	sed -i "/$pos/i$line_sec_mon" $ceph_conf 
+	sudo sed -i "/$pos/i$line_sec_mon" $ceph_conf 
 	
 	local line_mon_host="\\\\tmon host = $host"
-	sed -i "/$pos/i$line_mon_host" $ceph_conf 
+	sudo sed -i "/$pos/i$line_mon_host" $ceph_conf 
 
 	local line_mon_addr="\\\\tmon addr = $mon_addr"
-	sed -i "/$pos/i$line_mon_addr" $ceph_conf 
+	sudo sed -i "/$pos/i$line_mon_addr" $ceph_conf 
 
 	local line_mon_data="\\\\tmon data = $mon_dir/ceph-$mon_id"
-	sed -i "/$pos/i$line_mon_data" $ceph_conf 
+	sudo sed -i "/$pos/i$line_mon_data" $ceph_conf 
 }
 
 function get_fsid()
@@ -146,28 +146,28 @@ function create_monitor()
 	fi
 
 	local ret_err=
-	if ! ret_err=$(ceph-authtool --create-keyring /tmp/ceph.mon.keyring --gen-key -n mon. --cap mon 'allow *' 2>&1)
+	if ! ret_err=$(sudo ceph-authtool --create-keyring /tmp/ceph.mon.keyring --gen-key -n mon. --cap mon 'allow *' 2>&1)
 	then
 		LAST_ERROR_INFO="$ret_err"
 		add_log "ERROR" "$LAST_ERROR_INFO" $print_log
 		return 1
 	fi
 
-	if ! ret_err=$(ceph-authtool --create-keyring $conf_dir/ceph.client.admin.keyring --gen-key -n client.admin --set-uid=0 --cap mon 'allow *' --cap osd 'allow *' --cap mds 'allow' 2>&1)
+	if ! ret_err=$(sudo ceph-authtool --create-keyring $conf_dir/ceph.client.admin.keyring --gen-key -n client.admin --set-uid=0 --cap mon 'allow *' --cap osd 'allow *' --cap mds 'allow' 2>&1)
 	then
 		LAST_ERROR_INFO="$ret_err"
 		add_log "ERROR" "$LAST_ERROR_INFO" $print_log
 		return 1
 	fi
 
-	if ! ret_err=$(ceph-authtool /tmp/ceph.mon.keyring --import-keyring $conf_dir/ceph.client.admin.keyring 2>&1)
+	if ! ret_err=$(sudo ceph-authtool /tmp/ceph.mon.keyring --import-keyring $conf_dir/ceph.client.admin.keyring 2>&1)
 	then
 		LAST_ERROR_INFO="$ret_err"
 		add_log "ERROR" "$LAST_ERROR_INFO" $print_log
 		return 1
 	fi 
 
-	if ! ret_err=$(monmaptool --create --add $mon_id $mon_addr --fsid $fsid /tmp/monmap 2>&1)
+	if ! ret_err=$(sudo monmaptool --create --add $mon_id $mon_addr --fsid $fsid /tmp/monmap 2>&1)
 	then
 		LAST_ERROR_INFO="$ret_err"
 		add_log "ERROR" "$LAST_ERROR_INFO" $print_log
@@ -176,16 +176,16 @@ function create_monitor()
 
 	mkdir -p $mon_dir/ceph-$mon_id
 
-	if ! ret_err=$(ceph-mon --mkfs -i $mon_id --monmap /tmp/monmap --keyring /tmp/ceph.mon.keyring 2>&1)
+	if ! ret_err=$(sudo ceph-mon --mkfs -i $mon_id --monmap /tmp/monmap --keyring /tmp/ceph.mon.keyring 2>&1)
 	then
 		LAST_ERROR_INFO="$ret_err"
 		add_log "ERROR" "$LAST_ERROR_INFO" $print_log
 		return 1
 	fi
 
-	touch $mon_dir/ceph-$mon_id/done
+	sudo touch $mon_dir/ceph-$mon_id/done
 
-	if ! ret_err=$(ceph-mon -i $mon_id 2>&1)
+	if ! ret_err=$(sudo ceph-mon -i $mon_id 2>&1)
 	then
 		LAST_ERROR_INFO="$ret_err"
 		add_log "ERROR" "$LAST_ERROR_INFO" $print_log
@@ -211,10 +211,10 @@ function add_monitor()
 	fi
 	add_log "INFO" "ok ceph mon getmap"
 
-	mkdir -p $mon_dir/ceph-$mon_id
+	sudo mkdir -p $mon_dir/ceph-$mon_id
 
 	add_log "INFO" "will ceph-mon --mkfs"
-	if ! ret_err=$(ceph-mon -i $mon_id --mkfs --monmap /tmp/monmap --keyring /tmp/ceph.mon.keyring 2>&1)
+	if ! ret_err=$(sudo ceph-mon -i $mon_id --mkfs --monmap /tmp/monmap --keyring /tmp/ceph.mon.keyring 2>&1)
 	then
 		LAST_ERROR_INFO="$ret_err"
 		add_log "ERROR" "$LAST_ERROR_INFO" $print_log
@@ -223,7 +223,7 @@ function add_monitor()
 	add_log "INFO" "ok ceph-mon --mkfs"
 
 	add_log "INFO" "will start ceph-mon daemon"
-	if ! ret_err=$(ceph-mon -i $mon_id 2>&1)
+	if ! ret_err=$(sudo ceph-mon -i $mon_id 2>&1)
 	then
 		LAST_ERROR_INFO="$ret_err"
 		add_log "ERROR" "$LAST_ERROR_INFO" $print_log

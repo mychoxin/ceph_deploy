@@ -10,7 +10,7 @@ add_log "INFO" "$hostname: remote creating monitor..."
 add_log "INFO" "$0 $*"
 
 #ceph log dir
-mkdir -p /var/log/ceph 
+sudo mkdir -p /var/log/ceph 
 
 function usage()
 {
