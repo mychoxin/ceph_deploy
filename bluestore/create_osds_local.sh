@@ -205,7 +205,7 @@ function create_osd_ids()
 	for((i=0; i<$osd_total_count; ++i))
 	do
 		#if ! _osd_id=$(ceph osd create 2>&1)
-		if ! _osd_id=$(ceph osd create 2>/dev/null)
+		if ! _osd_id=$(sudo ceph osd create 2>/dev/null)
 		then
 			LAST_ERROR_INFO="ceph osd create failed. $_osd_id"
 			add_log "ERROR" "ceph osd create failed. $_osd_id"
@@ -248,12 +248,12 @@ function write_ceph_conf()
 			local osd_db_path="\\\\tbluestore block db path = $db_path"
 			local osd_block_path="\\\\tbluestore block path = $block_path"
 
-			sed -i "/$pos/i$osd_sec" $ceph_conf 
-			sed -i "/$pos/i$osd_host" $ceph_conf 
-			sed -i "/$pos/i$osd_data" $ceph_conf 
-			sed -i "/$pos/i$osd_wal_path" $ceph_conf
-			sed -i "/$pos/i$osd_db_path" $ceph_conf
-			sed -i "/$pos/i$osd_block_path" $ceph_conf
+			sudo sed -i "/$pos/i$osd_sec" $ceph_conf 
+			sudo sed -i "/$pos/i$osd_host" $ceph_conf 
+			sudo sed -i "/$pos/i$osd_data" $ceph_conf 
+			sudo sed -i "/$pos/i$osd_wal_path" $ceph_conf
+			sudo sed -i "/$pos/i$osd_db_path" $ceph_conf
+			sudo sed -i "/$pos/i$osd_block_path" $ceph_conf
 		fi  
 	done
 }
@@ -263,19 +263,19 @@ function create_osd()
 	for((i=0; i<$osd_total_count; ++i))
 	do
 		local osd_id=${arr_all_osd_id[$i]}
-	    	add_log "INFO" "============osd.$osd_id==============" $print_log
+		add_log "INFO" "============osd.$osd_id==============" $print_log
 		local osd_dir="${osd_data_dir}/osd-device-${osd_id}-data"
 		mkdir -p $osd_dir
 		#[ x"$osd_dir" != x ] && rm -fr $osd_dir/*
 		local ret_err=
-		if ! ret_err=$(ceph-osd -i $osd_id --mkfs --mkkey 2>&1)
+		if ! ret_err=$(sudo ceph-osd -i $osd_id --mkfs --mkkey 2>&1)
 		then
 			LAST_ERROR_INFO="$ret_err"
 			add_log "ERROR" "$ret_err" $print_log
 			return 1
 		fi
 
-		if ! ret_err=$(ceph auth add osd.$osd_id osd 'allow *' mon 'allow profile osd' -i $osd_dir/keyring 2>&1)
+		if ! ret_err=$(sudo ceph auth add osd.$osd_id osd 'allow *' mon 'allow profile osd' -i $osd_dir/keyring 2>&1)
 		then
 			LAST_ERROR_INFO="$ret_err"
 			add_log "ERROR" "$ret_err" $print_log
@@ -283,20 +283,20 @@ function create_osd()
 		fi
 
 		#only executed when add first OSD
-		if ! ceph osd tree| grep "host $host" &> /dev/null;
+		if ! sudo ceph osd tree| grep "host $host" &> /dev/null;
 		then
-			if ! ceph osd crush add-bucket $host host &> /dev/null; then return 1; fi
-			if ! ceph osd crush move $mon_id root=default &> /dev/null; then return 1; fi
+			if ! sudo ceph osd crush add-bucket $host host &> /dev/null; then return 1; fi
+			if ! sudo ceph osd crush move $mon_id root=default &> /dev/null; then return 1; fi
 		fi
 
-		if ! ret_err=$(ceph osd crush add osd.$osd_id 1.0 host=$host 2>&1)
+		if ! ret_err=$(sudo ceph osd crush add osd.$osd_id 1.0 host=$host 2>&1)
 		then
 			LAST_ERROR_INFO="$ret_err"
 			add_log "ERROR" "$ret_err" $print_log
 			return 1
 		fi
 
-		if ! ret_err=$(ceph-osd -i $osd_id 2>&1)
+		if ! ret_err=$(sudo ceph-osd -i $osd_id 2>&1)
 		then
 			LAST_ERROR_INFO="$ret_err"
 			add_log "ERROR" "$ret_err" $print_log
@@ -314,7 +314,7 @@ function check_status()
 	for((i=0; i<$osd_total_count; ++i))
 	do
 		sleep 1
-		local osd_stat=$(ceph osd dump|grep ^osd.|awk '{print $1" "$2" "$3}'|grep -w osd.${arr_all_osd_id[$i]})
+		local osd_stat=$(sudo ceph osd dump|grep ^osd.|awk '{print $1" "$2" "$3}'|grep -w osd.${arr_all_osd_id[$i]})
 		#echo $osd_stat
 		local arr_stat=($osd_stat)
 		echo "${arr_stat[*]}"
@@ -340,7 +340,7 @@ function rollback_osds()
 		if [ -d "$osd_data" ]
 		then
 			add_log "INFO" "deleting ${osd_data}..."
-			rm -fr $osd_data
+			sudo rm -fr $osd_data
 		fi
 	done
 }

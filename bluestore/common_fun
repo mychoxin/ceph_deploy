@@ -9,7 +9,7 @@ log_file_name="ceph_script_cluster.log"
 local_log_file=$SHELL_DIR/$log_file_name
 rotate_file=/etc/logrotate.d/ceph
 
-rm $log_file > /dev/null 2>&1 || :
+sudo rm $log_file > /dev/null 2>&1 || :
 
 ceph_dir=/var/lib/ceph
 osd_data_dir=$ceph_dir/osd
@@ -17,11 +17,13 @@ mon_dir=$ceph_dir/mon
 
 conf_dir=/etc/ceph
 ceph_conf=$conf_dir/ceph.conf
-tmp_dir=/tmp
+tmp_dir=/tmp3
+user="wanjun.lp"
 remote_tmp_dir=$tmp_dir/create_cluster
-mkdir -p $remote_tmp_dir
+sudo mkdir -p $remote_tmp_dir
+sudo chown $user $remote_tmp_dir
+sudo chgrp users $remote_tmp_dir
 remote_log_file=$remote_tmp_dir/$log_file_name
-user="root"
 osd_num_in_each_disk=1
 
 remove_wait=10
@@ -51,7 +53,7 @@ osd_dev="nvme"
 
 #ceph log dir
 ceph_log_dir=/var/log/ceph 
-mkdir -p $ceph_log_dir
+sudo mkdir -p $ceph_log_dir
 
 #1st param: level(ERROR, WARNING, INFO)
 #2nd param: detail info
@@ -64,9 +66,9 @@ function add_log()
 	local std_output=$3
 	if [ x"$level" = x ] && [ x"$info" = x ]
 	then
-		echo "" >> $local_log_file
+		sudo echo "" >> $local_log_file
 	else
-		echo "$date $level $info" >> $local_log_file
+		sudo echo "$date $level $info" >> $local_log_file
 	fi
 
 	if [ x"$std_output" = x"yes" ]
@@ -77,7 +79,7 @@ function add_log()
 
 function clear_log()
 {
-	echo "" > $local_log_file
+	sudo echo "" > $local_log_file
 }
 
 #1st param: exit code(0/1)
@@ -107,8 +109,8 @@ function my_exit()
 function get_blockdev_size()
 {
 	local dev=$1
-        sectors=`cat /sys/block/${dev##*/}/size`
-        echo $sectors/2/1024|bc
+	sectors=`cat /sys/block/${dev##*/}/size`
+	echo $sectors/2/1024|bc
 }
 
 #1st param: /dev/xxx
@@ -175,7 +177,7 @@ function waiting_for_active_clean()
 		if [ x"$break_wait" = x"break" ]
 		then
 			add_log "INFO" "waiting was broken" $print_log
-			rm -f $break_wait_file 
+			sudo rm -f $break_wait_file 
 			break
 		fi
 	done
@@ -186,7 +188,7 @@ function waiting_for_active_clean()
 function mk_gpt_label()
 {
 	local dev=$1
-	if parted -s -a optimal $dev mklabel gpt
+	if sudo parted -s -a optimal $dev mklabel gpt
 	then
 		return 0
 	fi
@@ -229,7 +231,7 @@ function get_new_partition()
 	local label=$2
 	local from=$3
 	local to=$4
- 	parted -s -a optimal $dev mkpart $label ${from} ${to} || return 1
+ 	sudo parted -s -a optimal $dev mkpart $label ${from} ${to} || return 1
 }
 
 #1st param: osd-id
@@ -251,13 +253,13 @@ function remove_one_osd()
 	#down the osd
 	#try to kill the the daemon many times gracefully, if failed then kill it use '-9' roughly
 	#this is avoid to umount fails
-	kill `ps aux |grep -w "ceph-osd -i $osd_id"|grep -vw grep|awk '{print $2}'` 2>/dev/null || :
+	sudo kill `ps aux |grep -w "ceph-osd -i $osd_id"|grep -vw grep|awk '{print $2}'` 2>/dev/null || :
 	ps=$(echo `ps aux|grep -w "ceph-osd -i $osd_id"|grep -vw grep`)
 	while [ x"$ps" != x ]
 	do
 		if [ $try_cnt -le 1 ]
 		then
-			kill -9 `ps uax |grep -w "ceph-osd -i $osd_id"|grep -vw grep|awk '{print $2}'` 2>/dev/null || :
+			sudo kill -9 `ps uax |grep -w "ceph-osd -i $osd_id"|grep -vw grep|awk '{print $2}'` 2>/dev/null || :
 			add_log "WARNING" "after trying $((retry_times+1)) times, osd.$osd_id was killed by kill -9" $print_log
 			break
 		fi
@@ -283,7 +285,7 @@ _bak_temp_conf=$conf_dir/._bak_temp_conf
 function delete_roll_back_conf()
 {
 	local suffix="$1"
-	[ -f "$_bak_temp_conf${suffix}" ] && rm -f "${_bak_temp_conf}${suffix}"
+	[ -f "$_bak_temp_conf${suffix}" ] && sudo rm -f "${_bak_temp_conf}${suffix}"
 }
 
 #delete the existed roll back ceph.conf
@@ -309,7 +311,7 @@ function create_roll_back_conf()
 		return 0
 	fi
 
-        if ! ret_err=$(cp "$ceph_conf" "$_bak_temp_conf$suffix" 2>&1)
+        if ! ret_err=$(sudo cp "$ceph_conf" "$_bak_temp_conf$suffix" 2>&1)
 	then
 		add_log "ERROR" "create $_bak_temp_conf$suffix failed.$ret_err" $print_log
 		return 1
@@ -403,7 +405,7 @@ function check_ssh()
 
 function back_conf()
 {
-	if cp $ceph_conf "$ceph_conf.`date +"%Y-%m-%d_%H-%M-%S"`"
+	if sudo cp $ceph_conf "$ceph_conf.`date +"%Y-%m-%d_%H-%M-%S"`"
 	then
 		return 0
 	fi
@@ -480,7 +482,7 @@ function is_valid_net()
 
 function is_health_ok()
 {
-	if ceph health |grep "^HEALTH_OK" > /dev/null
+	if sudo ceph health |grep "^HEALTH_OK" > /dev/null
 	then
 		return 0
 	fi
@@ -572,17 +574,9 @@ function sync_conf_to_other_node()
 	for node in ${arr_conf_node[@]}
 	do
 		node=$(host_to_ip $node)
-		if ! ret_err=$(back_remote_conf $node 2>&1)
-		then
-			add_log "WARNING" "back conf in $node failed. $ret_err" $print_log
-		fi
-
-		if ! ret_err=$($SCP $ceph_conf ${user}@${node}:$conf_dir 2>&1)
-		then
-			add_log "ERROR" "scp $ceph_conf ${user}@${node}:$conf_dir failed. $ret_err" $print_log
-			LAST_ERROR_INFO="scp $ceph_conf ${user}@${node}:$conf_dir failed. $ret_err${SEG}${LAST_ERROR_INFO}"
-			ret=1
-		fi
+		ssh ${user}@$node "mkdir -p ~/tmp"
+		scp $ceph_conf ${user}@$node:~/tmp/
+		ssh ${user}@$remote_ip "sudo cp ~/tmp/ceph.conf /etc/ceph/"
 	done
 	return $ret
 }
@@ -703,14 +697,14 @@ function my_scp()
 		target1=$(echo $target1 | awk -F: '{print $2}')
 		if [ x"$target1" = x"$target2/${target1##*/}" ]; then return 0; fi
 		if [ x"$target1" = x"$target2" ]; then return 0; fi
-		if ! cp $target1 $target2; then return 1; fi
+		if ! sudo cp $target1 $target2; then return 1; fi
 	elif is_current_machine "$ip2"
 	then
 		#local copy
 		target2=$(echo $target2 | awk -F: '{print $2}')
 		if [ x"$target1" = x"$target2/${target1##*/}" ]; then return 0; fi
 		if [ x"$target1" = x"$target2" ]; then return 0; fi
-		if ! cp $target1 $target2; then return 1; fi
+		if ! sudo cp $target1 $target2; then return 1; fi
 	else
 		#remote copy
 		local error_log=
@@ -810,19 +804,20 @@ function remote_prepare_files()
 		return 1
 	fi
 
-	if ! ret_err=$($SCP $ceph_conf ${user}@$remote_ip:$ceph_conf 2>&1)
-	then
-		LAST_ERROR_INFO="copy $ceph_conf to $remote_ip failed.$ret_err"
-		return 1
-	fi
+	ssh ${user}@$remote_ip "mkdir -p ~/tmp"
+	scp $ceph_conf ${user}@$remote_ip:~/tmp/
+	ssh ${user}@$remote_ip "sudo cp ~/tmp/ceph.conf /etc/ceph/"
+#	if ! ret_err=$($SCP $ceph_conf ${user}@$remote_ip:$ceph_conf 2>&1)
+#	then
+#		LAST_ERROR_INFO="copy $ceph_conf to $remote_ip failed.$ret_err"
+#		return 1
+#	fi
 
 	for file in "$SHELL_DIR/common_fun" `ls $SHELL_DIR/*.sh 2>/dev/null || :`
 	do
-		if ! ret_err=$($SCP $file ${user}@$remote_ip:$remote_tmp_dir 2>&1)
-		then
-			LAST_ERROR_INFO="copy $file to ${user}@$remote_ip:$remote_tmp_dir failed.$ret_err"
-			return 1
-		fi
+		ssh ${user}@$remote_ip "mkdir -p ~/tmp"
+		scp $file ${user}@$remote_ip:~/tmp/
+		ssh ${user}@$remote_ip "sudo cp ~/tmp/* $remote_tmp_dir"
 	done
 }
 
@@ -830,21 +825,21 @@ function remote_prepare_files()
 #2nd param: force del partitions, yes/no
 function clear_node()
 {
-	kill -9 `pidof ceph-mon` 2>/dev/null || :
-	kill -9 `pidof ceph-osd` 2>/dev/null || :
+	sudo kill -9 `pidof ceph-mon` 2>/dev/null || :
+	sudo kill -9 `pidof ceph-osd` 2>/dev/null || :
 
 	local force=$1
 	clear_all_nvme_partition $force
 
-	rm -f /tmp/ceph.mon.keyring 2>/dev/null || :
-	rm -f $conf_dir/ceph.client.admin.keyring 2>/dev/null || :
-	rm -f /tmp/monmap 2>/dev/null || :
-	rm -fr $osd_data_dir 2>/dev/null || :
-	rm -fr $mon_dir 2>/dev/null || :
-	rm -fr $ceph_dir 2>/dev/null || :
-	rm -fr $conf_dir 2>/dev/null || :
-	rm -fr $ceph_log_dir 2>/dev/null || :
-	rm -f $rotate_file 2>/dev/null || :
+	sudo rm -f /tmp/ceph.mon.keyring 2>/dev/null || :
+	sudo rm -f $conf_dir/ceph.client.admin.keyring 2>/dev/null || :
+	sudo rm -f /tmp/monmap 2>/dev/null || :
+	sudo rm -fr $osd_data_dir 2>/dev/null || :
+	sudo rm -fr $mon_dir 2>/dev/null || :
+	sudo rm -fr $ceph_dir 2>/dev/null || :
+	sudo rm -fr $conf_dir 2>/dev/null || :
+	sudo rm -fr $ceph_log_dir 2>/dev/null || :
+	sudo rm -f $rotate_file 2>/dev/null || :
 
 	return 0
 }
@@ -922,20 +917,20 @@ function create_logrotate_file()
 {
 	if [ ! -f $rotate_file ]
 	then
-		echo "/var/log/ceph/*.log"	> $rotate_file
-		echo -e "{"			>> $rotate_file
-		echo -e "\tsize=100M"		>> $rotate_file
-		echo -e "\trotate 4"		>> $rotate_file
-		echo -e "\tdaily"		>> $rotate_file
-		echo -e "\tcompress"		>> $rotate_file
-		echo -e "\tsharedscripts"	>> $rotate_file
-		echo -e "\tpostrotate"		>> $rotate_file
-		echo -e "\tkillall -q -1 ceph-mon ceph-osd radosgw || true"	>> $rotate_file
-		echo -e "\tendscript"		>> $rotate_file
-		echo -e "\tmissingok"		>> $rotate_file
-		echo -e "\tnotifempty"		>> $rotate_file
-		echo -e "\tsu root ceph"	>> $rotate_file
-		echo -e "}"			>> $rotate_file
+		sudo sh -c "echo '/var/log/ceph/*.log'	> $rotate_file"
+		sudo sh -c "echo -e '{'			>> $rotate_file"
+		sudo sh -c "echo -e '\tsize=100M'		>> $rotate_file"
+		sudo sh -c "echo -e '\trotate 4'		>> $rotate_file"
+		sudo sh -c "echo -e '\tdaily'		>> $rotate_file"
+		sudo sh -c "echo -e '\tcompress'		>> $rotate_file"
+		sudo sh -c "echo -e '\tsharedscripts'	>> $rotate_file"
+		sudo sh -c "echo -e '\tpostrotate'		>> $rotate_file"
+		sudo sh -c "echo -e '\tkillall -q -1 ceph-mon ceph-osd radosgw || true'	>> $rotate_file"
+		sudo sh -c "echo -e '\tendscript'		>> $rotate_file"
+		sudo sh -c "echo -e '\tmissingok'		>> $rotate_file"
+		sudo sh -c "echo -e '\tnotifempty'		>> $rotate_file"
+		sudo sh -c "echo -e '\tsu root ceph'	>> $rotate_file"
+		sudo sh -c "echo -e '}'			>> $rotate_file"
 	fi
 }
 
@@ -949,11 +944,9 @@ function remote_cp_common()
 		return 1
 	fi
 
-	if ! ret_err=$($SCP $SHELL_DIR/common_fun ${user}@$remote_ip:$remote_tmp_dir 2>&1)
-	then
-		LAST_ERROR_INFO="scp $SHELL_DIR/common_fun to $remote_ip failed.$ret_err"
-		return 1
-	fi
+	ssh ${user}@$remote_ip "mkdir -p ~/tmp"
+	scp $SHELL_DIR/common_fun ${user}@$remote_ip:~/tmp/
+	ssh ${user}@$remote_ip "sudo cp ~/tmp/common_fun $remote_tmp_dir"
 
 	return 0
 }
@@ -977,7 +970,7 @@ function set_hosts()
 			add_log "WARNING" "get hostname from $node failed." $print_log
 			continue
 		fi
-		echo -e "${node}\t${hostname}" >> /etc/hosts
+		sudo bash -c "echo -e '${node}\t${hostname}' >> /etc/hosts"
 	done
 }
 
