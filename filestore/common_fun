@@ -312,7 +312,7 @@ function rollback_conf()
 	add_log "INFO" "rollback conf..."
 	if [ -f "$_bak_temp_conf$suffix" ]
 	then
-		mv -f "$_bak_temp_conf$suffix" "$ceph_conf" || :
+		sudo mv -f "$_bak_temp_conf$suffix" "$ceph_conf" || :
 	fi
 }
 
@@ -601,9 +601,9 @@ function sync_conf_to_other_node()
 	for node in ${arr_conf_node[@]}
 	do
 		node=$(host_to_ip $node)
-	ssh ${user}@$node "mkdir -p ~/tmp"
-	scp $ceph_conf ${user}@$node:~/tmp/
-	ssh ${user}@$remote_ip "sudo cp ~/tmp/ceph.conf /etc/ceph/"
+		ssh ${user}@$node "mkdir -p ~/tmp"
+		scp $ceph_conf ${user}@$node:~/tmp/
+		ssh ${user}@$node "sudo cp -f ~/tmp/ceph.conf /etc/ceph/"
 	done
 	return $ret
 }
@@ -646,7 +646,7 @@ function update_conf_from_one_mon()
 				back_conf || :
 
 				#replace by new
-				if ! mv $remote_tmp_dir/ceph.conf $ceph_conf 2>&1
+				if ! sudo mv -f $remote_tmp_dir/ceph.conf $ceph_conf 2>&1
 				then
 					return 1
 				fi
@@ -927,14 +927,12 @@ function remote_prepare_files()
 	#	return 1
 	#fi
 
-set -x
 	for file in "$SHELL_DIR/common_fun" `ls $SHELL_DIR/*.sh 2>/dev/null || :`
 	do
 	ssh ${user}@$remote_ip "mkdir -p ~/tmp"
 	scp $file ${user}@$remote_ip:~/tmp/
 	ssh ${user}@$remote_ip "sudo cp ~/tmp/* $remote_tmp_dir"
 	done
-set +x
 }
 
 #remove all dirs about ceph, and ceph daemon
@@ -975,7 +973,6 @@ function remote_clear_node()
 		echo -e "$LAST_ERROR_INFO" >&2
 		return 1
 	fi
-	echo fffffffffffff
 	if ! $SSH ${user}@$ip "source $remote_tmp_dir/common_fun && clear_node $force; exit $?" 
 	then
 		LAST_ERROR_INFO="$ret_err\n$LAST_ERROR_INFO"

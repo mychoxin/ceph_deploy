@@ -117,8 +117,8 @@ function parse_and_check_params()
 
 function create_osd()
 {
-	remote_prepare_files $remote_ip || return 1
 	update_conf_from_one_mon || :
+	remote_prepare_files $remote_ip || return 1
 
 	add_log "INFO" "remote creating osd..." $print_log
 	local local_ret=
