@@ -11,20 +11,20 @@ add_log "INFO" "$0 $*"
 
 function usage()
 {
-        echo "Usage:$0 -m|--monitors <monitor IPs>" \
-	" -s|--storagenodes <osd IPs>" \
+	echo "Usage:$0 -m|--monitors <file with monitor IPs>" \
+	" -s|--storagenodes <file with osd IPs>" \
 	" [-n|--osd-num <osd num per journal device>]" \
 	" -c|--cluster-net <cluster net>" \
 	" -p|--public-net <public net>" \
 	" [-h|--help]"
 
-        echo "-m, --monitors <monitor IPs>"
+	echo "-m, --monitors <file with monitor IPs>"
 	echo -e "\tIPs used to ssh and remote create monitors, make sure SSH login without passwd, not support ipv6 or lookback interface"
-        echo -e "\teg. -m 10.10.10.1,10.10.10.2, use ',' to seperate"
+	echo -e "\teg. -m /tmp/mon.txt"
 
-	echo "-s, --storagenodes <osd IPs>"
+	echo "-s, --storagenodes <file with osd IPs>"
 	echo -e "\tIPs used to ssh and remote create OSD, make sure SSH login without passwd, not support ipv6 or lookback interface"
-	echo -e "\teg. -s 10.10.20.1,10.10.20.2, use ',' to seperate"
+	echo -e "\teg. -s /tmp/osd.txt"
 	echo -e "\tFor each osd node,  if there is enough journal devices, all devices about /dev/sd* except /dev/sda\n" \
 	        "\twill be used as data devices, and one osd uses one data device, every data device will be parted to\n" \
 		"\tone partition and format to xfs; All devices about /dev/nvme* will be used as journal devices and every\n" \
@@ -53,6 +53,9 @@ then
 	my_exit 1 "$RESULT_ERROR" "parse arguments failed, $temp"
 fi
 
+mon_list="/$tmp_dir/mon.txt"
+osd_list="/$tmp_dir/osd.txt"
+
 ceph_conf_tpl=$SHELL_DIR/ceph.conf.template
 eval set -- "$temp"
 while true
@@ -60,8 +63,8 @@ do
         case "$1" in
                 -c|--cluster-net) cluster_ip=$2; shift 2;;
                 -p|--public-net) public_ip=$2; shift 2;;
-		-m|--monitors) mon_init_memb=$2;arr_ip_monitors=(${2//,/ }); shift 2;;
-		-s|--storagenodes) arr_ip_storage=(${2//,/ }); shift 2;;
+		-m|--monitors) mon_init_memb=$2;arr_ip_monitors=($(sudo cat $2 | grep -v ^#)); mon_list=$2; shift 2;;
+		-s|--storagenodes) arr_ip_storage=($(sudo cat $2 | grep -v ^#)); osd_list=$2;shift 2;;
 		-n|--osd-num) data_disks_of_each_journal=$2; shift 2;;
                 #-r|--rule-num) data_disks_of_each_journal=$2; shift 2;;
                 -h|--help) usage; exit 1;;
@@ -134,64 +137,41 @@ function check_all_ip_valid()
 function check_all_node_not_exist_conf()
 {
 	local ret=0
-	for node in ${arr_ip_monitors[@]}
-	do
-		if $SSH ${user}@$node "ls $ceph_conf" > /dev/null 2>&1
-		then
-			add_log "ERROR" "monitor node: $node, exists $ceph_conf, you should remove it" $print_log
-			LAST_ERROR_INFO="monitor node $node exists $ceph_conf, you should remove it.\n${LAST_ERROR_INFO}"
-			ret=1
-		fi
-	done
+	if ! $remote_exec $mon_list "sudo bash -c 'ls /etc/ceph/ceph.conf 2>/dev/null'"
+	then
+		ret=1
+		LAST_ERROR_INFO="check exist ceph.conf failed"
+		add_log "ERROR" "$LAST_ERROR_INFO" $print_log
+	fi
 
-	for node in ${arr_ip_storage[@]}
-	do
-		if $SSH ${user}@$node "ls $ceph_conf" > /dev/null 2>&1
-		then
-			add_log "ERROR" "storage node: $node, exists $ceph_conf, you should remove it" $print_log
-			LAST_ERROR_INFO="storage node $node exists $ceph_conf, you should remove it.\n${LAST_ERROR_INFO}"
-			ret=1
-		fi
-	done
+	if ! $remote_exec $osd_list "sudo bash -c 'ls /etc/ceph/ceph.conf 2>/dev/null'"
+	then
+		ret=1
+		LAST_ERROR_INFO="check exist ceph.conf failed"
+		add_log "ERROR" "$LAST_ERROR_INFO" $print_log
+	fi
+
 	return $ret
 }
 
 function check_all_node_not_exist_ceph_daemon()
 {
 	local ret=0
-	for node in ${arr_ip_monitors[@]}
-	do
-		if $SSH ${user}@$node "pidof ceph-mon" > /dev/null
-		then
-			add_log "ERROR" "monitor node: $node, ceph-mon is running" $print_log
-			LAST_ERROR_INFO="monitor node $node, ceph-mon is running.\n${LAST_ERROR_INFO}"
-			ret=1
-		fi
+	local all_list=all.txt
+	make_all_node $mon_list $osd_list $all_list
+	if ! $remote_exec $all_list "sudo bash -c 'pidof ceph-mon 2>/dev/null'"
+	then
+		ret=1
+		LAST_ERROR_INFO="check exist ceph-mon failed"
+		add_log "ERROR" "$LAST_ERROR_INFO" $print_log
+	fi
 
-		if $SSH ${user}@$node "pidof ceph-osd" > /dev/null
-		then
-			add_log "ERROR" "monitor node: $node, ceph-osd is running" $print_log
-			LAST_ERROR_INFO="monitor node $node, ceph-osd is running.\n${LAST_ERROR_INFO}"
-			ret=1
-		fi
-	done
-
-	for node in ${arr_ip_storage[@]}
-	do
-		if $SSH ${user}@$node "pidof ceph-mon" > /dev/null
-		then
-			add_log "ERROR" "storage node: $node, ceph-mon is running" $print_log
-			LAST_ERROR_INFO="storage node $node, ceph-mon is running.\n${LAST_ERROR_INFO}"
-			ret=1
-		fi
-
-		if $SSH ${user}@$node "pidof ceph-osd" > /dev/null
-		then
-			add_log "ERROR" "storage node: $node, ceph-osd is running" $print_log
-			LAST_ERROR_INFO="storage node $node, ceph-osd is running.\n${LAST_ERROR_INFO}"
-			ret=1
-		fi
-	done
+	if ! $remote_exec $all_list "sudo bash -c 'pidof ceph-osd 2>/dev/null'"
+	then
+		ret=1
+		LAST_ERROR_INFO="check exist ceph-osd failed"
+		add_log "ERROR" "$LAST_ERROR_INFO" $print_log
+	fi
 	return $ret
 }
 
@@ -203,32 +183,26 @@ function check_all_node_exist_pubnet_and_clstnet()
 	local pubnet_print=$(echo $cluster_ip|awk -F/ '{print $1"."$2}' |awk -F. '{print $1"."$2"."$3".*""/"$5}')
 	local clstnet_print=$(echo $public_ip|awk -F/ '{print $1"."$2}' |awk -F. '{print $1"."$2"."$3".*""/"$5}')
 	LAST_ERROR_INFO=""
-	for node in ${arr_ip_monitors[@]}
-	do
-		if ! $SSH ${user}@$node "ip addr ls |awk '{print \$2}' |grep $pubnet_tmp" &> /dev/null
-		then
-			add_log "ERROR" "monitor node: $node, no public net $pubnet_print" $print_log
-			LAST_ERROR_INFO="monitor node $node no public net $pubnet_print.\n${LAST_ERROR_INFO}"
-			ret=1
-		fi
-	done
+	if ! $remote_exec $mon_list "ip addr ls |awk '{print \$2}' |grep $pubnet_tmp" &> /dev/null
+	then
+		add_log "ERROR" "monitor node: $node, no public net $pubnet_print" $print_log
+		LAST_ERROR_INFO="monitor node $node no public net $pubnet_print.\n${LAST_ERROR_INFO}"
+		ret=1
+	fi
 
-	for node in ${arr_ip_storage[@]}
-	do
-		if ! $SSH ${user}@$node "ip addr ls |awk '{print \$2}' |grep $clstnet_tmp" &> /dev/null
-		then
-			add_log "ERROR" "storage node: $node, no cluster net $clstnet_print" $print_log
-			LAST_ERROR_INFO="storage node $node no cluster net $clstnet_print.\n${LAST_ERROR_INFO}"
-			ret=1
-		fi
+	if ! $remote_exec $osd_list "ip addr ls |awk '{print \$2}' |grep $clstnet_tmp" &> /dev/null
+	then
+		add_log "ERROR" "storage node: $node, no cluster net $clstnet_print" $print_log
+		LAST_ERROR_INFO="storage node $node no cluster net $clstnet_print.\n${LAST_ERROR_INFO}"
+		ret=1
+	fi
 
-		if ! $SSH ${user}@$node "ip addr ls |awk '{print \$2}' |grep $pubnet_tmp" &> /dev/null
-		then
-			add_log "ERROR" "storage node: $node, no public net $pubnet_print" $print_log
-			LAST_ERROR_INFO="storage node $node no public net $pubnet_print\n${LAST_ERROR_INFO}"
-			ret=1
-		fi
-	done
+	if ! $remote_exec $osd_list "ip addr ls |awk '{print \$2}' |grep $pubnet_tmp" &> /dev/null
+	then
+		add_log "ERROR" "storage node: $node, no public net $pubnet_print" $print_log
+		LAST_ERROR_INFO="storage node $node no public net $pubnet_print\n${LAST_ERROR_INFO}"
+		ret=1
+	fi
 	return $ret
 }
 
@@ -358,11 +332,11 @@ function parse_and_check_params()
 	add_log "INFO" "cluster net=$cluster_ip"
 
 	check_all_ip_valid || my_exit $? "$RESULT_ERROR" "$LAST_ERROR_INFO"
-	check_all_ip_ssh || my_exit $? "$RESULT_ERROR" "$LAST_ERROR_INFO"
+#	check_all_ip_ssh || my_exit $? "$RESULT_ERROR" "$LAST_ERROR_INFO"
 	check_all_node_not_exist_ceph_daemon || my_exit $? "$RESULT_ERROR" "$LAST_ERROR_INFO"
 	check_all_node_not_exist_conf || my_exit $? "$RESULT_ERROR" "$LAST_ERROR_INFO"
 	check_all_node_exist_pubnet_and_clstnet || my_exit $? "$RESULT_ERROR" "$LAST_ERROR_INFO"
-	check_all_storage_nvme || my_exit $? "$RESULT_ERROR" "$LAST_ERROR_INFO"
+#	check_all_storage_nvme || my_exit $? "$RESULT_ERROR" "$LAST_ERROR_INFO"
 }
 
 function set_conf()
@@ -410,51 +384,47 @@ function set_conf()
 
 function create_monitor_osd()
 {
-	local ret=1
-	local remote_ret=
+	local tmp_list=tmp_list.txt
+	local remote_ip=${arr_ip_monitors[0]}
+	sudo bash -c "cat $remote_ip > /$tmp_dir/$tmp_list"
+	#create mon
+	remote_prepare_files $tmp_list
+	$remote_exec $tmp_list "$remote_tmp_dir/create_monitor_local.sh"
+
+	#add mon
+	sudo bash -c "echo '' > /$tmp_dir/$tmp_list"
+	for((i=1; i<${#arr_ip_monitors[@]}; ++i))
+	do
+		sudo bash -c "echo ${arr_ip_monitors[$i]} >> /$tmp_dir/$tmp_list"
+	done
+	[ $i -gt 1 ] && remote_prepare_files $tmp_list
+	[ $i -gt 1 ] && $remote_exec $tmp_list "$remote_tmp_dir/create_monitor_local.sh -a"
+	[ $i -gt 1 ] && \
 	for((i=0; i<${#arr_ip_monitors[@]}; ++i))
 	do
+		local tmp_conf=tmp.mon.conf
 		local node=${arr_ip_monitors[$i]}
-		add_log "INFO" "Creating monitor in $node..." $print_log
-		if [ $i -eq 0 ]
-		then
-			#the first: create
-			if ! remote_ret=$($SHELL_DIR/create_monitor_remote.sh "$sub_shell_opt" -t $node 2>&1)
-			then
-				LAST_ERROR_INFO="Create monitor in $node failed.\n$remote_ret"
-				add_log "ERROR" "Create monitor in $node failed" $print_log
-				return 1
-			else
-				add_log "INFO" "Create monitor in $node ok" $print_log
-			fi
-		else
-			#others: add
-			if ! remote_ret=$($SHELL_DIR/create_monitor_remote.sh "$sub_shell_opt" -t $node --add 2>&1)
-			then
-				LAST_ERROR_INFO="Create monitor in $node failed.\n$remote_ret"
-				add_log "ERROR" "Create monitor in $node failed" $print_log
-				return 1
-			else
-				add_log "INFO" "Create monitor in $node ok" $print_log
-			fi
-		fi
+		sudo scp $user@${node}:"$conf_dir/$tmp_conf" $ceph_dir/$node.$tmp_conf || :
+		sudo cat $conf_dir/$node.$tmp_conf >> $ceph_conf || :
 	done
 
-	for node in ${arr_ip_storage[@]}
+	local_opt="-fu -r $data_disks_of_each_journal $local_opt"
+	remote_prepare_files $osd_list
+	$remote_exec $osd_list "$remote_tmp_dir/create_osds_local.sh $local_opt"
+
+	for((i=0; i<${#arr_ip_storage[@]}; ++i))
 	do
-		add_log "INFO" "Creating osd in $node..." $print_log
-		#if ! remote_ret=$($SHELL_DIR/create_osds_remote.sh $sub_shell_opt $local_opt -t $node 2>&1)
-		if ! $SHELL_DIR/create_osds_remote.sh $sub_shell_opt $local_opt -t $node 2>&1
-		then
-			LAST_ERROR_INFO="Create osd in $node failed.\n$remote_ret"
-			add_log "ERROR" "Create osd in $node failed" $print_log
-			return 1
-		else
-			ret=0
-			add_log "INFO" "Create osd in $node ok" $print_log
-		fi
+		local tmp_conf=tmp.osd.conf
+		local node=${arr_ip_storage[$i]}
+		sudo scp $user@${node}:"$conf_dir/$tmp_conf" $ceph_dir/$node.$tmp_conf || :
+		sudo cat $conf_dir/$node.$tmp_conf >> $ceph_conf || :
 	done
-	return $ret
+
+	#sync conf to other node
+	local all_list=all.txt
+	make_all_node $mon_list $osd_list $all_list
+	$remote_cp $all_list "$ceph_conf" "$tmp_dir"
+	$remote_exec $all_list "sudo cp $tmp_dir/ceph.conf $ceph_conf"
 }
 
 #start creating

@@ -46,7 +46,7 @@ function usage()
 RESULT_ERROR="Create osd on $hostname failed."
 RESULT_OK="Create osd on $hostname successfully."
 
-if ! temp=$(getopt -o n:r:fuh --long osd-num:,rule-num:,force,unformat,help -n 'note' -- "$@" 2>&1)
+if ! temp=$(getopt -o n:r:p:fuh --long osd-num:,rule-num:,prefix:,force,unformat,help -n 'note' -- "$@" 2>&1)
 then
 	add_log "ERROR" "parse arguments failed, $temp" $print_log
 	my_exit 1 "$RESULT_ERROR" "parse arguments failed, $temp" $format
@@ -57,6 +57,7 @@ mon_id=$host
 force=0
 format=1
 data_disks_of_each_journal=4
+tmp_conf=tmp.osd.conf
 
 eval set -- "$temp"
 while true
@@ -64,6 +65,7 @@ do
         case "$1" in
                 -n|--osd-num) osd_num_in_each_disk=$2; shift 2;;
                 -r|--rule-num) data_disks_of_each_journal=$2; shift 2;;
+                -p|--prefix) tmp_conf=$2; shift 2;;
                 -f|--force) force=1; shift 1;;
                 -u|--unformat) format=0; shift 1;;
                 -h|--help) usage; exit 1;;
@@ -371,6 +373,7 @@ function write_ceph_conf()
 	create_roll_back_conf || :
 	back_conf || :
 	local part_path="/dev/disk/by-partlabel"
+	local tmp_conf_path=$conf_dir/$tmp_conf
         for((i=0; i<$osd_total_count; ++i))
         do
                 local osd_id=${arr_all_osd_id[$i]}
@@ -379,23 +382,23 @@ function write_ceph_conf()
 
 		local pos="\[client\]"
 		local osd_line=""
-		if ! osd_line=$(grep "$pos" $ceph_conf)
-		then
-                	echo "[osd.$osd_id]" >> $ceph_conf
-        		echo -e "\thost = $host" >> $ceph_conf
-			echo -e "\tosd journal = ${part_path}/osd-${osd_id}-journal" >> $ceph_conf
-        		echo -e "\tosd data = $data_dir" >> $ceph_conf
-		else
-                	local osd_sec="\[osd.$osd_id\]"
-        		local osd_host="\\\\thost = $host"
-			local osd_journal="\\\\tosd journal = ${part_path}/osd-${osd_id}-journal"
-        		local osd_data="\\\\tosd data = $data_dir"
+		#if ! osd_line=$(grep "$pos" $ceph_conf)
+		#then
+                	echo "[osd.$osd_id]" > $tmp_conf_path
+        		echo -e "\thost = $host" >> $tmp_conf_path
+			echo -e "\tosd journal = ${part_path}/osd-${osd_id}-journal" >> $tmp_conf_path
+        		echo -e "\tosd data = $data_dir" >> $tmp_conf_path
+		#else
+                #	local osd_sec="\[osd.$osd_id\]"
+        	#	local osd_host="\\\\thost = $host"
+		#	local osd_journal="\\\\tosd journal = ${part_path}/osd-${osd_id}-journal"
+        	#	local osd_data="\\\\tosd data = $data_dir"
 
-			sudo sed -i "/$pos/i$osd_sec" $ceph_conf 
-			sudo sed -i "/$pos/i$osd_host" $ceph_conf 
-			sudo sed -i "/$pos/i$osd_journal" $ceph_conf 
-			sudo sed -i "/$pos/i$osd_data" $ceph_conf 
-		fi  
+		#	sudo sed -i "/$pos/i$osd_sec" $ceph_conf 
+		#	sudo sed -i "/$pos/i$osd_host" $ceph_conf 
+		#	sudo sed -i "/$pos/i$osd_journal" $ceph_conf 
+		#	sudo sed -i "/$pos/i$osd_data" $ceph_conf 
+		#fi  
         done
 }
 

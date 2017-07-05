@@ -30,7 +30,7 @@ function usage()
 RESULT_ERROR="Create monitor on $hostname failed."
 RESULT_OK="Create monitor on $hostname successfully."
 
-if ! temp=$(getopt -o auh --long add,unformat,help -n 'note' -- "$@" 2>&1)
+if ! temp=$(getopt -o p:auh --long prefix:,add,unformat,help -n 'note' -- "$@" 2>&1)
 then
 	add_log "ERROR" "parse arguments failed, $temp" $print_log
 	my_exit 1 "$RESULT_ERROR" "Parse arguments failed. $temp" 1
@@ -38,11 +38,14 @@ fi
 
 #[ ! -d "$conf_dir" ] && mkdir $conf_dir -p
 
+tmp_conf=tmp.mon.conf
+
 format=1
 eval set -- "$temp"
 while true
 do
         case "$1" in
+                -p|--prefix) tmp_conf=$2; shift 2;;
                 -a|--add) add_mon_flag=1; shift 1;;
                 -u|--unformat) format=0; shift 1;;
                 -h|--help) usage; exit 1;;
@@ -100,17 +103,30 @@ function set_conf()
 		return 1
 	fi
 
-	local line_sec_mon="\[mon.$mon_id\]"
-	sudo sed -i "/$pos/i$line_sec_mon" $ceph_conf 
-	
-	local line_mon_host="\\\\tmon host = $host"
-	sudo sed -i "/$pos/i$line_mon_host" $ceph_conf 
+	local tmp_conf_path=$conf_dir/$tmp_conf
 
-	local line_mon_addr="\\\\tmon addr = $mon_addr"
-	sudo sed -i "/$pos/i$line_mon_addr" $ceph_conf 
+	if [ $add_mon_flag -eq 1 ]
+	then
+		local line_sec_mon="\[mon.$mon_id\]"
+		local line_mon_host="\tmon host = $host"
+		local line_mon_addr="\tmon addr = $mon_addr"
+		local line_mon_data="\tmon data = $mon_dir/ceph-$mon_id"
 
-	local line_mon_data="\\\\tmon data = $mon_dir/ceph-$mon_id"
-	sudo sed -i "/$pos/i$line_mon_data" $ceph_conf 
+		sudo echo $line_sec_mon > $tmp_conf_path
+		sudo echo $line_mon_host >> $tmp_conf_path
+		sudo echo $line_mon_addr >> $tmp_conf_path
+		sudo echo $line_mon_data >> $tmp_conf_path
+	else
+		local line_sec_mon="\[mon.$mon_id\]"
+		local line_mon_host="\\\\tmon host = $host"
+		local line_mon_addr="\\\\tmon addr = $mon_addr"
+		local line_mon_data="\\\\tmon data = $mon_dir/ceph-$mon_id"
+
+		sudo sed -i "/$pos/i$line_sec_mon" $ceph_conf
+		sudo sed -i "/$pos/i$line_mon_host" $ceph_conf
+		sudo sed -i "/$pos/i$line_mon_addr" $ceph_conf
+		sudo sed -i "/$pos/i$line_mon_data" $ceph_conf
+	fi
 }
 
 function get_fsid()

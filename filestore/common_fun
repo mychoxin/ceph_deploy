@@ -26,6 +26,8 @@ sudo chgrp users $remote_tmp_dir
 remote_log_file=$remote_tmp_dir/$log_file_name
 osd_num_in_each_disk=1
 data_disks_of_each_journal=4
+remote_exec=pgm -A -p 10 -b -f 
+remote_cp=pgmscp -A -p 10 -b -f 
 
 remove_wait=10
 wait_health_ok=30
@@ -632,28 +634,20 @@ function update_conf_from_one_mon()
 		return 0
 	fi
 
-	for node in ${arr_conf_node[@]}
-	do
-		node=$(host_to_ip $node)
-		#not current node
-		if ! is_current_machine $node
-		then
-			if ! is_conf_eq $node
-			then
-				add_log "WARNING" "conf file is diff from $node"
+	local tmp_list=montmp.txt
+	local remote_ip=$(host_to_ip ${arr_conf_node[0]})
+	sudo bash -c "cat $remote_ip > /$tmp_dir/$tmp_list"
+	if ! ret_err=$(scp ${user}@$remote_ip:$ceph_conf $remote_tmp_dir/ceph.conf 2>&1)
+	then
+			add_log "ERROR" "$ret_err" $print_log
+			return 1
+	fi
 
-				#back ceph.conf, use to look up history
-				back_conf || :
+	if ! ret_err=$(sudo mv -f $remote_tmp_dir/ceph.conf $ceph_conf 2>&1)
+	then
+			return 1
+	fi
 
-				#replace by new
-				if ! sudo mv -f $remote_tmp_dir/ceph.conf $ceph_conf 2>&1
-				then
-					return 1
-				fi
-				return 0
-			fi
-		fi
-	done
 	return 1
 }
 
@@ -763,7 +757,7 @@ function replace_local_conf
 function remote_mkdir()
 {
 	local ip=$1
-	$SSH $user@$ip "sudo mkdir -p $conf_dir && sudo mkdir -p $remote_tmp_dir" || return 1
+	$remote_exec $ip "sudo mkdir -p $conf_dir && sudo mkdir -p $remote_tmp_dir" || return 1
 	return 0
 }
 
@@ -918,21 +912,21 @@ function remote_prepare_files()
 		return 1
 	fi
 
-	ssh ${user}@$remote_ip "mkdir -p ~/tmp"
-	scp $ceph_conf ${user}@$remote_ip:~/tmp/
-	ssh ${user}@$remote_ip "sudo cp ~/tmp/ceph.conf /etc/ceph/"
-	#if ! ret_err=$($SCP $ceph_conf ${user}@$remote_ip:$ceph_conf 2>&1)
-	#then
-	#	LAST_ERROR_INFO="copy $ceph_conf to $remote_ip failed.$ret_err"
-	#	return 1
-	#fi
+	$remote_exec $remote_ip "mkdir -p ~/tmp"
+	$remote_cp $remote_ip $ceph_conf "~/tmp/"
+	$remote_exec $remote_ip "sudo cp ~/tmp/ceph.conf /etc/ceph/"
 
-	for file in "$SHELL_DIR/common_fun" `ls $SHELL_DIR/*.sh 2>/dev/null || :`
-	do
-	ssh ${user}@$remote_ip "mkdir -p ~/tmp"
-	scp $file ${user}@$remote_ip:~/tmp/
-	ssh ${user}@$remote_ip "sudo cp ~/tmp/* $remote_tmp_dir"
-	done
+	local files="$SHELL_DIR/common_fun $(ls $SHELL_DIR/*.sh 2>/dev/null || :)"
+	$remote_cp $remote_ip "$files" "~/tmp/"
+	files="~/tmp/common_fun \$(ls ~/tmp/*.sh 2>/dev/null || :)"
+	$remote_exec $remote_ip "sudo cp $files $remote_tmp_dir"
+
+	#for file in "$SHELL_DIR/common_fun" `ls $SHELL_DIR/*.sh 2>/dev/null || :`
+	#do
+	#ssh ${user}@$remote_ip "mkdir -p ~/tmp"
+	#scp $file ${user}@$remote_ip:~/tmp/
+	#ssh ${user}@$remote_ip "sudo cp ~/tmp/* $remote_tmp_dir"
+	#done
 }
 
 #remove all dirs about ceph, and ceph daemon
@@ -1126,3 +1120,11 @@ function set_last_error()
 	fi
 }
 
+function make_all_node()
+{
+	local mon=$1
+	local osd=$2
+	local all=$3
+	sudo bash -c "cat $mon > /$tmp_dir/$all"
+	sudo bash -c "cat $osd >> /$tmp_dir/$all"
+}
