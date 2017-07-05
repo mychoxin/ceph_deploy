@@ -12,6 +12,7 @@ add_log "INFO" "$0 $*"
 function usage()
 {
 	echo "Usage:$0 -m|--monitors <file with monitor IPs>" \
+
 	" -s|--storagenodes <file with osd IPs>" \
 	" [-n|--osd-num <osd num per journal device>]" \
 	" -c|--cluster-net <cluster net>" \
@@ -25,6 +26,7 @@ function usage()
 	echo "-s, --storagenodes <file with osd IPs>"
 	echo -e "\tIPs used to ssh and remote create OSD, make sure SSH login without passwd, not support ipv6 or lookback interface"
 	echo -e "\teg. -s /tmp/osd.txt"
+
 	echo -e "\tFor each osd node,  if there is enough journal devices, all devices about /dev/sd* except /dev/sda\n" \
 	        "\twill be used as data devices, and one osd uses one data device, every data device will be parted to\n" \
 		"\tone partition and format to xfs; All devices about /dev/nvme* will be used as journal devices and every\n" \
@@ -63,8 +65,10 @@ do
         case "$1" in
                 -c|--cluster-net) cluster_ip=$2; shift 2;;
                 -p|--public-net) public_ip=$2; shift 2;;
+
 		-m|--monitors) mon_init_memb=$2;arr_ip_monitors=($(sudo cat $2 | grep -v ^#)); mon_list=$2; shift 2;;
 		-s|--storagenodes) arr_ip_storage=($(sudo cat $2 | grep -v ^#)); osd_list=$2;shift 2;;
+    
 		-n|--osd-num) data_disks_of_each_journal=$2; shift 2;;
                 #-r|--rule-num) data_disks_of_each_journal=$2; shift 2;;
                 -h|--help) usage; exit 1;;

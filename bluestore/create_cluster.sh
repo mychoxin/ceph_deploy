@@ -12,7 +12,7 @@ add_log "INFO" "$0 $*"
 function usage()
 {
 	echo "Usage:$0 -m|--monitors <monitor IPs>"\
-	"-s|--storagenodes <storage node IPs>"\
+	" -s|--storagenodes <file with osd IPs>" \
 	"[-n|--osd-num <osd num per disk>]"\
 	"-c|--cluster-net <cluster net>"\
 	"-p|--public-net <public net>"\
@@ -21,8 +21,8 @@ function usage()
 	echo "-m, --monitors <monitor IPs>"
 	echo -e "\teg. -m 10.10.10.1,10.10.10.2, use ',' to seperate"
 
-	echo "-s, --storagenodes <storage node IPs>"
-	echo -e "\teg. -s 10.10.20.1,10.10.20.2, use ',' to seperate"
+	echo "-s, --storagenodes <file with osd IPs>"
+	echo -e "\teg. -s /tmp/osd_file"
 
 	echo "[-n, --osd-num<osd num in each disk>]"
 	echo -e "\tdefault is 1, every disk will be parted to num*3 partitions(wal,db,block)"
@@ -54,7 +54,7 @@ do
 		-c|--cluster-net) cluster_ip=$2; shift 2;;
 		-p|--public-net) public_ip=$2; shift 2;;
 		-m|--monitors) mon_init_memb=$2;arr_ip_monitors=(${2//,/ }); shift 2;;
-		-s|--storagenodes) arr_ip_storage=(${2//,/ }); shift 2;;
+		-s|--storagenodes) arr_ip_storage=($(sudo cat $2 | grep -v ^#)); shift 2;;
 		-n|--osd-num) osd_num_in_each_disk=$2; shift 2;;
 		-h|--help) usage; exit 1;;
 		--) shift; break;;#??
