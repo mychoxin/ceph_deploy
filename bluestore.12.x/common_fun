@@ -1,0 +1,1182 @@
+#!/bin/bash
+
+if [ x"$SHELL_DIR" = x ]
+then
+        SHELL_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+fi
+
+log_file_name="ceph_script_cluster.log"
+local_log_file=$SHELL_DIR/$log_file_name
+rotate_file=/etc/logrotate.d/ceph
+
+rm $log_file > /dev/null 2>&1 || :
+
+ceph_dir=/var/lib/ceph
+osd_data_dir=$ceph_dir/osd
+osd_data_base="ceph"
+mon_dir=$ceph_dir/mon
+mgr_dir=$ceph_dir/mgr
+
+conf_dir=/etc/ceph
+ceph_conf=$conf_dir/ceph.conf
+tmp_dir=/tmp
+remote_tmp_dir=$tmp_dir/create_cluster
+mkdir -p $remote_tmp_dir
+remote_log_file=$remote_tmp_dir/$log_file_name
+user="root"
+osd_num_in_each_disk=1
+
+remove_wait=10
+wait_health_ok=30
+ssh_check_time_out=5
+hostname=$(hostname)
+
+size_1G=$((1024*1024*1024))
+# crush weight base size 1T
+crush_weight_base=$((1024*size_1G))
+
+#print log to screen, default=no
+print_log=${print_log:-"yes"}
+
+SSH=my_ssh
+SCP=my_scp
+
+osd_dev="nvme"
+#VM test
+#use /dev/sdb, /dev/sdc, /dev/sdd
+#osd_dev="sd[b-d]"
+
+#use /dev/loop0
+#osd_dev="loop0"
+
+#use /dev/nvme*, /dev/sdb ~ /dev/sdd
+#osd_dev="nvme|sd[b-d]"
+
+#use /dev/nvme*, /dev/loop0, /dev/loop1
+#osd_dev="nvme|loop[0-1]"
+
+#ceph log dir
+ceph_log_dir=/var/log/ceph 
+mkdir -p $ceph_log_dir
+
+#1st param: level(ERROR, WARNING, INFO)
+#2nd param: detail info
+#3rd parma: print or not(yes/no)
+function add_log()
+{
+	local level="$1"
+	local info="$2"
+	local date="[`date +"%m/%d %H:%M:%S"`]"
+	local std_output=$3
+	if [ x"$level" = x ] && [ x"$info" = x ]
+	then
+		echo "" >> $local_log_file
+	else
+		echo "$date $level $info" >> $local_log_file
+	fi
+
+	if [ x"$std_output" = x"yes" ]
+	then
+		echo "$level: $info"
+	fi
+}
+
+function clear_log()
+{
+	echo "" > $local_log_file
+}
+
+#1st param: exit code(0/1)
+#2nd param: result
+#3rd param: detail info
+#4th param: type(1=format, 0=unformat)
+function my_exit()
+{
+	local exit_code=$1
+	local result="$2"
+	local details="$3"
+	local ftype="$4"
+
+	if [ x"$ftype" = x"0" ]
+	then
+		echo -e "$details"
+	else
+		echo -e "Reslut:$result"
+		echo -e "Detail:$details"
+	fi
+	
+	exit $exit_code
+}
+
+#1st param : /dev/xxx
+#return size(M)
+function get_blockdev_size()
+{
+	local dev=$1
+        sectors=`cat /sys/block/${dev##*/}/size`
+        echo $sectors/2/1024|bc
+}
+
+#1st param: /dev/xxx
+function is_mounted()
+{
+	local dev=$1
+	if [ x"`mount|grep ^\"$dev\"`" = x ]
+	then
+		#not mounted
+		return 1
+	fi
+	return 0
+}
+
+function is_active_clean()
+{
+	local pg_status
+	local pg_count=$(ceph pg stat|awk '{print $2}')
+	if [ x"$pg_count" = x0 ]
+	then
+		return 0
+	fi
+
+	local tmp_status=$(ceph -s)
+	local line=$(echo "$tmp_status" | grep -wn "pgmap" | awk -F':' '{print $1}')
+	pg_status=$(echo "$tmp_status" | sed -n "$((line+2))p" || :)
+	if echo "$pg_status" |grep -w "$pg_count active+clean" > /dev/null
+	then
+		echo "pg_count=$pg_count, $(echo $pg_status)"
+		return 0
+	fi
+	echo "pg_count=$pg_count, $(echo $pg_status)"
+	return 1
+}
+
+function waiting_for_active_clean()
+{
+	local break_wait_file="$SHELL_DIR/break_waiting.txt"
+	add_log "INFO" "recent health status:`ceph health`"
+	local go_away=0
+	local pg_status=
+	while true
+	do
+		sleep 1
+		if pg_status=$(is_active_clean)
+		then
+			break
+		fi
+		((++go_away))
+		if [ $((go_away%5)) -eq 0 ]
+		then
+			#ceph health
+			[ x"$print_log" = x"yes" ] &&\
+			echo "waiting for all pgs active+clean, current status: $pg_status"
+		fi
+
+		if [ $((go_away%10)) -eq 0 ]
+		then
+			[ x"$print_log" = x"yes" ] &&\
+			echo "you can break the waiting by 'echo break > $break_wait_file'"
+		fi
+
+		local break_wait=$(cat $break_wait_file 2>/dev/null)
+		if [ x"$break_wait" = x"break" ]
+		then
+			add_log "INFO" "waiting was broken" $print_log
+			rm -f $break_wait_file 
+			break
+		fi
+	done
+	add_log "INFO" "new health status: $pg_status" $print_log
+}
+
+#1st param: /dev/xxx
+function mk_gpt_label()
+{
+	local dev=$1
+	if parted -s -a optimal $dev mklabel gpt
+	then
+		return 0
+	fi
+	return 1
+}
+
+#1st param: /dev/xxx
+function del_all_partition()
+{
+	local dev=$1
+
+	if [ ! -b "$dev" ] && [ ! -L "$dev" ]
+	then
+		echo "'$dev' not exists" >&2
+		add_log "ERROR" "'$dev' is invalid block device" $print_log
+		return 1
+	fi
+
+	if is_mounted $dev
+	then
+		add_log "ERROR" "'$dev' was mounted" $print_log
+		echo "'$dev' was mounted" >&2
+		return 1
+	fi
+
+	if mk_gpt_label $dev
+	then
+		return 0
+	fi
+	return 1
+}
+
+#1st param: /dev/xxx
+#2nd param: part label
+#3rd param: from
+#4th param: to
+function get_new_partition()
+{
+	local dev=$1
+	local label=$2
+	local from=$3
+	local to=$4
+ 	parted -s -a optimal $dev mkpart $label ${from} ${to} || return 1
+}
+
+#1st param: osd-id
+#2nd param: kill osd retry times
+function remove_one_osd()
+{
+	local osd_id=$1
+	local retry_times=$2
+	local try_cnt=$2
+
+	#reweight the osd
+	ceph osd crush reweight osd.$osd_id 0 &> /dev/null || :
+	[ $retry_times -ne 0 ] && sleep 2 && waiting_for_active_clean
+
+	#out the osd
+	ceph osd out osd.$osd_id &> /dev/null || :
+	[ $retry_times -ne 0 ] && sleep 2 && waiting_for_active_clean
+
+	#down the osd
+	#try to kill the the daemon many times gracefully, if failed then kill it use '-9' roughly
+	#this is avoid to umount fails
+	kill -9 `ps aux | grep -w [c]eph-osd -i $osd_id | awk '{print $2}'` 2>&1 || :
+
+	ceph osd crush remove osd.$osd_id &> /dev/null || :
+	ceph auth del osd.$osd_id &> /dev/null || :
+	ceph osd rm $osd_id &> /dev/null || :
+	add_log "INFO" "removed osd.$osd_id"
+	return 0
+}
+
+_bak_temp_conf=$conf_dir/._bak_temp_conf
+
+#delete the roll back ceph.conf
+function delete_roll_back_conf()
+{
+	local suffix="$1"
+	[ -f "$_bak_temp_conf${suffix}" ] && rm -f "${_bak_temp_conf}${suffix}"
+}
+
+#delete the existed roll back ceph.conf
+delete_roll_back_conf || :
+
+#use roll back ceph.conf
+function rollback_conf()
+{
+	local suffix="$1"
+	add_log "INFO" "rollback conf..."
+	if [ -f "$_bak_temp_conf$suffix" ]
+	then
+		mv -f "$_bak_temp_conf$suffix" "$ceph_conf" || :
+	fi
+}
+
+#create a temp file to back ceph.conf, when create osd failed, use it to roll back the ceph.conf
+function create_roll_back_conf()
+{
+	local suffix="$1"
+	if [ ! -f $ceph_conf ]
+	then
+		return 0
+	fi
+
+        if ! ret_err=$(cp "$ceph_conf" "$_bak_temp_conf$suffix" 2>&1)
+	then
+		add_log "ERROR" "create $_bak_temp_conf$suffix failed.$ret_err" $print_log
+		return 1
+	fi
+	return 0
+}
+
+function set_lib_path()
+{
+	echo "/usr/lib" > /etc/ld.so.conf.d/ceph.ld.so.conf
+	echo "/usr/local/lib/x86_64-linux-gnu/" >> /etc/ld.so.conf.d/ceph.ld.so.conf
+	ldconfig
+}
+set_lib_path
+
+function get_all_nvme_dev()
+{
+	local nvme_devs=
+	if nvme_devs=$(lsblk -nd | awk '{print "/dev/"$1}'| grep -E "$osd_dev" 2>&1)
+	then
+		echo $nvme_devs
+		return 0
+	fi
+	#LAST_ERROR_INFO="$nvme_devs, \n$LAST_ERROR_INFO"
+	return 1
+}
+
+
+#1st param: prompt info
+function wait_for_yes()
+{
+	local info="${1}? [yes/no] "
+	local yes_no=
+	while true
+	do
+		read -p "$info" yes_no
+		if [ x"$yes_no" = x"yes" ]
+		then
+			return 0
+		elif [ x"$yes_no" = x"no" ]
+		then
+			return 1
+		fi
+	done
+}
+
+#1st param: ip
+function check_ping()
+{
+	local ip=$1
+	if ping -w 1 $ip > /dev/null 2>&1
+	then
+		return 0
+	fi
+	return 1
+}
+
+#1st param: ip
+function check_ssh()
+{
+	local ip=$1
+	if ! check_ping $ip
+	then
+		LAST_ERROR_INFO="ping $ip failed.\n$LAST_ERROR_INFO"
+		return 1
+	fi
+
+	if is_current_machine $ip
+	then
+		return 0
+	fi
+
+	#FIXME
+	#( my_ssh $user@"$ip" "exit" > /dev/null 2>&1 ) &
+	#local _ssh_pid=$!
+	#local time_out=$ssh_check_time_out
+	#while [ -e /proc/$_ssh_pid ]
+	#do
+	#        if [ $time_out -le 0 ]
+	#        then
+	#		LAST_ERROR_INFO="ssh to $ip time out.\n$LAST_ERROR_INFO"
+	#                kill $_ssh_pid
+	#                return 1
+	#        fi
+	#        ((time_out--))
+	#        sleep 1
+	#done
+
+	return 0
+}
+
+function back_conf()
+{
+	if cp $ceph_conf "$ceph_conf.`date +"%Y-%m-%d_%H-%M-%S"`"
+	then
+		return 0
+	fi
+	return 1
+}
+
+#1st param: remote ip
+function back_remote_conf()
+{
+	local ip=$1
+	if is_current_machine $ip
+	then
+		return 0
+	fi
+
+	if $SSH ${user}@$ip "cp $ceph_conf \"$ceph_conf.`date +"%Y-%m-%d_%H-%M-%S"`\""
+	then
+		return 0
+	fi
+	return 1
+}
+
+#1st param: user
+#2st param: remote ip
+function get_remote_log()
+{
+	local user=$1
+	local remote_ip=$2
+	$SSH ${user}@$remote_ip "cat $remote_log_file 2>&1" >> $local_log_file
+	echo "" >> $local_log_file
+}
+
+#1st param: ip
+function is_valid_ip()
+{
+	local IP=$1
+	local VALID_CHECK=$(echo $IP|awk -F. '$1<255&&$2<255&&$3<255&&$4<255{print "yes"}')
+	if [ x"$VALID_CHECK" != x"yes" ]
+	then
+		return 1
+	fi
+
+	if echo $IP|grep -E "^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$" > /dev/null
+	then
+		return 0
+	else
+		return 1
+	fi
+}
+
+#1st param: ip mask(eg. 192.168.1.107/24)
+function is_valid_net()
+{
+	local net=$1
+	local IP=$(echo "$IP"|awk -F/ '{print $1}')
+	local mask=$(echo "$IP"|awk -F/ '{print $2}')
+	if ! is_valid_ip "$IP"
+	then
+		return 1
+	fi
+
+        if ! expr match "$mask" "^[0-9]{1,2}$" > /dev/null
+	then
+		return 1
+	fi
+
+	if [ "$mask" -gt 31 ]
+	then
+		return 1
+	fi
+
+	return 0
+}
+
+function is_health_ok()
+{
+	if ceph health |grep "^HEALTH_OK" > /dev/null
+	then
+		return 0
+	fi
+	return 1
+}
+
+function wait_for_health_ok()
+{
+	local cnt=0
+	while ! is_health_ok
+	do
+		if [ $((cnt%5)) -eq 0 ]
+		then
+			add_log "WARNING" "health=`ceph health |awk '{print $1}' || :`, retry=$((wait_health_ok-cnt))" $print_log
+		fi
+
+		if [ $cnt -ge $wait_health_ok ]
+		then
+			add_log "ERROR" "health=`ceph health |awk '{print $1}' || :`" $print_log
+			return 1
+		fi
+		cnt=$((cnt+1))
+		sleep 1
+	done
+	return 0
+}
+
+function is_all_conf_node_ssh()
+{
+    local arr_conf_node=($(grep -E "host =|mon host =" $ceph_conf | grep -v "#" | awk -F " = " '{print $2}'))
+	for node in ${arr_conf_node[@]}
+	do
+		node=$(host_to_ip $node)
+		if ! check_ssh $node
+		then
+			add_log "ERROR" "ssh check $node failed" $print_log
+			return 1
+		fi
+	done
+	return 0
+}
+
+#1st param: remote ip
+function is_conf_eq()
+{
+	local remote_ip=$1
+	if [ x"$remote_ip" = x ]
+	then
+		return 1
+	fi
+
+	if ! ret_err=$(remote_mkdir $remote_ip 2>&1)
+	then
+		LAST_ERROR_INFO="on $remote_ip mkdir failed.$ret_err"
+		return 1
+	fi
+
+	if ! ret_err=$($SCP ${user}@$remote_ip:$ceph_conf $remote_tmp_dir/ceph.conf 2>&1)
+	then
+		LAST_ERROR_INFO="copy ${user}@$remote_ip:$ceph_conf failed.$ret_err"
+		return 1
+	fi
+
+	local sum_local=$(md5sum $ceph_conf | awk '{print $1}')
+	local sum_remote=$(md5sum $remote_tmp_dir/ceph.conf | awk '{print $1}')
+	if [ x"${sum_local:-error1}" = x"${sum_remote:-error2}" ]
+	then
+		return 0
+	fi
+	return 1
+}
+
+#1st param: hostname
+function host_to_ip()
+{
+	local host=$1
+	local ip=$(getent hosts| grep -w "$host"| awk '$0!~/^127/{print $1;exit}') 
+	if [ x"$ip" = x ]
+	then
+		echo $host
+	fi
+	echo $ip
+}
+
+function sync_conf_to_other_node()
+{
+	local ret=0
+	local arr_conf_node=($(grep -E "host =|mon host =" $ceph_conf | grep -v "#" | awk -F " = " '{print $2}'))
+	for node in ${arr_conf_node[@]}
+	do
+		node=$(host_to_ip $node)
+		if ! ret_err=$(back_remote_conf $node 2>&1)
+		then
+			add_log "WARNING" "back conf in $node failed. $ret_err" $print_log
+		fi
+
+		if ! ret_err=$($SCP $ceph_conf ${user}@${node}:$conf_dir 2>&1)
+		then
+			add_log "ERROR" "scp $ceph_conf ${user}@${node}:$conf_dir failed. $ret_err" $print_log
+			LAST_ERROR_INFO="scp $ceph_conf ${user}@${node}:$conf_dir failed. $ret_err${SEG}${LAST_ERROR_INFO}"
+			ret=1
+		fi
+	done
+	return $ret
+}
+
+#check ip is current machine
+#1st param: ip
+function is_current_machine()
+{
+	local ip=$1
+	if [ x"$ip" = x ]
+	then
+		return 1
+	fi
+	if ifconfig |grep ${ip} > /dev/null || [ x"`hostname`" = x"$ip" ]
+	then
+		return 0
+	fi
+	return 1
+}
+
+function update_conf_from_one_mon()
+{
+	local arr_conf_node=($(awk -F" = " '/\[mon..*\]/{b=1}b==1&&$1=="\tmon host"{print $2}' $ceph_conf))
+	if [ ${#arr_conf_node[@]} -eq 1 ] && is_current_machine ${arr_conf_node[0]}
+	then
+		return 0
+	fi
+
+	for node in ${arr_conf_node[@]}
+	do
+		node=$(host_to_ip $node)
+		#not current node
+		if ! is_current_machine $node
+		then
+			if ! is_conf_eq $node
+			then
+				add_log "WARNING" "conf file is diff from $node"
+
+				#back ceph.conf, use to look up history
+				back_conf || :
+
+				#replace by new
+				if ! mv $remote_tmp_dir/ceph.conf $ceph_conf 2>&1
+				then
+					return 1
+				fi
+				return 0
+			fi
+		fi
+	done
+	return 1
+}
+
+function dev_operation_prompt()
+{
+	if ! nvme_devs=($(lsblk -nd | awk '{print "/dev/"$1}'| grep -E "$osd_dev"))
+	then
+		echo "no device about $osd_dev"
+		return 0
+	fi
+
+	local ret=0
+	for dev in ${nvme_devs[@]}
+	do
+		if is_mounted $dev
+		then
+			echo "$dev was mounted on `mount |grep $dev| awk '{print $3}'`"
+			ret=2
+		fi
+	done
+
+	#if [ $ret -ne 0 ]
+	#then
+	#	return 0
+	#fi
+
+	for dev in ${nvme_devs[@]}
+	do
+		if ls $dev*? > /dev/null 2>&1
+		then
+			echo "$dev has partition"
+		fi
+	done
+
+	return 0
+}
+
+#1st param: user@ip
+#2nd param: cmd
+function my_ssh()
+{
+	local target=$1
+	local cmd="$2"
+	local ip=$(echo "$target" | awk -F"@" '{print $2}' | awk -F: '{print $1}')
+	if is_current_machine $ip
+	then
+		#local exe
+		if ! eval "$cmd"; then return 1; fi
+	else
+		#remote exe
+		if ! ssh $target "$cmd"; then return 1; fi
+	fi
+
+	return 0
+}
+
+#1st param: user@ip
+#2nd param: cmd
+function my_scp()
+{
+	local target1=$1
+	local target2=$2
+	local ip1=$(echo "$target1" | awk -F"@" '{print $2}' | awk -F: '{print $1}')
+	local ip2=$(echo "$target2" | awk -F"@" '{print $2}' | awk -F: '{print $1}')
+	if is_current_machine "$ip1"
+	then
+		#local copy
+		target1=$(echo $target1 | awk -F: '{print $2}')
+		if [ x"$target1" = x"$target2/${target1##*/}" ]; then return 0; fi
+		if [ x"$target1" = x"$target2" ]; then return 0; fi
+		if ! cp $target1 $target2; then return 1; fi
+	elif is_current_machine "$ip2"
+	then
+		#local copy
+		target2=$(echo $target2 | awk -F: '{print $2}')
+		if [ x"$target1" = x"$target2/${target1##*/}" ]; then return 0; fi
+		if [ x"$target1" = x"$target2" ]; then return 0; fi
+		if ! cp $target1 $target2; then return 1; fi
+	else
+		#remote copy
+		local error_log=
+		if ! error_log=$(scp "$target1" "$target2" 2>&1)
+		then
+			add_log "ERROR" "scp $target1 $target2 failed, $error_log" $print_log
+			return 1
+		fi
+	fi
+
+	return 0
+}
+
+#1st param: remote ip
+function replace_local_conf
+{
+	local ip=$1
+	if ! is_current_machine $ip
+	then
+		back_conf || :
+		if ! ret_err=$($SCP ${user}@$remote_ip:$ceph_conf $ceph_conf 2>&1)
+		then
+			add_log "WARNING" "$ret_err" $print_log
+			return 1
+		fi
+	fi
+	return 0
+}
+
+#1st param: remote ip
+function remote_mkdir()
+{
+	local ip=$1
+	$SSH $user@$ip "mkdir -p $conf_dir && mkdir -p $remote_tmp_dir" || return 1
+	return 0
+}
+
+#whether the device is used by osd
+#1st param: /dev/XXX
+function is_device_used()
+{
+	local dev=$1
+	local hostname=$(hostname)
+
+	if [ ! -f $ceph_conf ]
+	then
+		add_log "WARNING" "not find $ceph_conf"
+		return 1
+	fi
+
+	local arr_conf_part=($(awk -F" = " '
+	/\[osd..*\]/{a=1}a==1&&$1=="\thost"&&$2=="'"$hostname"'"{b=1}b==1&&$1=="\tbluestore block path"{print $2;a=b=0}
+	' $ceph_conf))
+
+	local block_part=($(parted $dev -s print |awk '/'"${osd_data_base}"'-.*-block/{print $0}'|awk '{print "/dev/disk/by-partlabel/"$NF}'))
+	if [ x"$block_part" = x ]
+	then
+		return 1
+	fi
+
+	for part in ${arr_conf_part[@]}
+	do
+		if [ x"$part" = x"$block_part" ]
+		then
+			add_log "INFO" "found $part in $ceph_conf"
+			return 0
+		fi
+	done
+	return 1
+}
+
+#1st param: force del partitions yes/no
+function clear_all_nvme_partition()
+{
+	local force=$1
+	local arr_all_nvme_dev=($(get_all_nvme_dev))
+	for dev in ${arr_all_nvme_dev[@]}
+	do
+		if is_device_used $dev || [ x"$force" = x"yes" ]
+		then
+			del_all_partition $dev || :
+
+			add_log "INFO" "clearing dev head info of $dev" $print_log
+			if ! ret=$(dev_head clear $dev 2>&1)
+			then
+				add_log "INFO" "clear head info of $dev failed, $ret"
+			fi
+		else
+			add_log "WARNING" "$dev is not used by any osd, because its partition not found in $ceph_conf" $print_log
+		fi
+	done
+}
+
+#copy all sh scripts to remote machine
+#1st param: ip
+function remote_prepare_files()
+{
+	local remote_ip=$1
+	if ! remote_mkdir $remote_ip
+	then
+		LAST_ERROR_INFO="on $remote_ip mkdir failed."
+		return 1
+	fi
+
+	if ! ret_err=$($SCP $ceph_conf ${user}@$remote_ip:$ceph_conf 2>&1)
+	then
+		LAST_ERROR_INFO="copy $ceph_conf to $remote_ip failed.$ret_err"
+		return 1
+	fi
+
+	for file in "$SHELL_DIR/common_fun" `ls $SHELL_DIR/*.sh 2>/dev/null || :`
+	do
+		if ! ret_err=$($SCP $file ${user}@$remote_ip:$remote_tmp_dir 2>&1)
+		then
+			LAST_ERROR_INFO="copy $file to ${user}@$remote_ip:$remote_tmp_dir failed.$ret_err"
+			return 1
+		fi
+	done
+}
+
+function ceph_stop_all()
+{
+    find -L /var/lib/ceph/$1/ -mindepth 1 -maxdepth 1 -regextype posix-egrep -regex '.*/[A-Za-z0-9]+-[A-Za-z0-9._-]+' -printf '%P\n' \
+  | while read f; do
+    if [ -e "/var/lib/ceph/$1/$f/upstart" ] && [ ! -e "/var/lib/ceph/$1/$f/sysvinit" ]; then
+        cluster="${f%%-*}"
+        id="${f#*-}"
+
+        [ x"$1" = x"radosgw" ] && local type_name="radosgw" || local type_name="$cluster-$1"
+        if ! ret_err=$(stop "$type_name" cluster="$cluster" id="$id" 2>&1)
+        then
+            add_log "ERROR" "stop $type_name cluster=$cluster id=$id, failed, $ret_err" $print_log
+            return 1
+        fi
+    fi
+  done
+}
+#remove all dirs about ceph, and ceph daemon
+#2nd param: force del partitions, yes/no
+function clear_node()
+{
+	killall ceph-osd || :
+	killall ceph-mgr || :
+	killall ceph-mon || :
+
+	local force=$1
+	clear_all_nvme_partition $force
+
+	rm -f /tmp/ceph.mon.keyring 2>/dev/null || :
+	rm -f $conf_dir/ceph.client.admin.keyring 2>/dev/null || :
+	rm -f /tmp/monmap 2>/dev/null || :
+	rm -fr $osd_data_dir 2>/dev/null || :
+	rm -fr $mon_dir 2>/dev/null || :
+	rm -fr $mgr_dir 2>/dev/null || :
+	rm -fr $ceph_dir 2>/dev/null || :
+	rm -fr $conf_dir 2>/dev/null || :
+	rm -fr $ceph_log_dir 2>/dev/null || :
+	rm -f $rotate_file 2>/dev/null || :
+
+	return 0
+}
+
+#1st param: ip
+#2nd param: force del partitions, yes/no
+function remote_clear_node()
+{
+	local ip=$1
+	local force=$2
+	if ! remote_cp_common $ip
+	then
+		echo -e "$LAST_ERROR_INFO" >&2
+		return 1
+	fi
+
+	if ! ret_err=$($SSH ${user}@$ip "source $remote_tmp_dir/common_fun && clear_node $force && rm -fr $remote_tmp_dir" 2>&1)
+	then
+		LAST_ERROR_INFO="$ret_err\n$LAST_ERROR_INFO"
+		add_log "ERROR" "remote clear node failed in $ip, $ret_err" $print_log
+		return 1
+	fi
+	return 0
+}
+
+function check_only_one_mon_node()
+{
+	local arr_conf_node=($(awk -F" = " '/\[mon..*\]/{a=1}a==1&&$1=="\tmon host"{print $2; a=0}' $ceph_conf))
+	if [ ${#arr_conf_node[@]} -eq 1 ]
+	then
+		LAST_ERROR_INFO="only one mon node in conf(mon host=${arr_conf_node[0]}), mybe you want clear the cluster"
+		add_log "ERROR" "$LAST_ERROR_INFO" $print_log
+		return 1
+	fi
+
+	return 0
+}
+
+function check_only_one_mgr_node()
+{
+	local arr_conf_node=($(awk -F" = " '/\[mgr\..*\]/{a=1}a==1&&$1=="\thost"{print $2; a=0}' $ceph_conf))
+	if [ ${#arr_conf_node[@]} -eq 1 ]
+	then
+		LAST_ERROR_INFO="only one mgr node in conf(host=${arr_conf_node[0]}), mybe you want clear the cluster"
+		add_log "ERROR" "$LAST_ERROR_INFO" $print_log
+		return 1
+	fi
+
+	return 0
+}
+
+function check_only_one_osd_node()
+{
+	local arr_conf_node=($(awk -F" = " '/\[osd..*\]/{a=1}a==1&&$1=="\thost"{print $2; a=0}' $ceph_conf))
+	if [ ${#arr_conf_node[@]} -eq 1 ]
+	then
+		add_log "ERROR" "only one osd node in conf(host=${arr_conf_node[0]}), mybe you want clear the cluster" $print_log
+		return 1
+	fi
+
+	return 0
+}
+
+#1st param: osd num in one disk
+function check_osd_num_in_each_disk()
+{
+	LAST_ERROR_INFO=""
+	local num="$1"
+        if ! expr match "$num" "[1-9][0-0]*$" > /dev/null
+        then
+		add_log "ERROR" "osd_num_in_each_disk=$num is invalid, must a num in [1 ~ 10]" $print_log
+		LAST_ERROR_INFO="osd_num_in_each_disk=$num is invalid, must a num in [1 ~ 10]."
+		return 1
+	fi
+
+	local n=$num
+	if [ $n -ge 10 ]
+	then
+		add_log "ERROR" "osd_num_in_each_disk=$num is invalid, must a num in [1 ~ 10]" $print_log
+		LAST_ERROR_INFO="osd_num_in_each_disk=$num is invalid, must a num in [1 ~ 10]."
+		return 1
+	fi
+	return 0
+}
+
+# create ceph log rotate file
+function create_logrotate_file()
+{
+	if [ ! -f $rotate_file ]
+	then
+		echo "/var/log/ceph/*.log"	> $rotate_file
+		echo -e "{"			>> $rotate_file
+		echo -e "\tsize=100M"		>> $rotate_file
+		echo -e "\trotate 4"		>> $rotate_file
+		echo -e "\tdaily"		>> $rotate_file
+		echo -e "\tcompress"		>> $rotate_file
+		echo -e "\tsharedscripts"	>> $rotate_file
+		echo -e "\tpostrotate"		>> $rotate_file
+		echo -e "\tkillall -q -1 ceph-mon ceph-osd radosgw || true"	>> $rotate_file
+		echo -e "\tendscript"		>> $rotate_file
+		echo -e "\tmissingok"		>> $rotate_file
+		echo -e "\tnotifempty"		>> $rotate_file
+		echo -e "\tsu root ceph"	>> $rotate_file
+		echo -e "}"			>> $rotate_file
+	fi
+}
+
+#1st param: remote ip
+function remote_cp_common()
+{
+	local remote_ip=$1
+	if ! ret_err=$(remote_mkdir $remote_ip 2>&1)
+	then
+		LAST_ERROR_INFO="on $remote_ip mkdir failed.$ret_err"
+		return 1
+	fi
+
+	if ! ret_err=$($SCP $SHELL_DIR/common_fun ${user}@$remote_ip:$remote_tmp_dir 2>&1)
+	then
+		LAST_ERROR_INFO="scp $SHELL_DIR/common_fun to $remote_ip failed.$ret_err"
+		return 1
+	fi
+
+	return 0
+}
+
+#auto configure the /etc/host
+#1st param: IPs
+function set_hosts()
+{
+	local all_nodes=($1)
+	local hostname=
+	for node in ${all_nodes[@]}
+	do
+		if grep -v "^#" /etc/hosts | grep -w "$node" &> /dev/null
+		then
+			continue
+		fi
+
+		if ! hostname=$($SSH "$user@$node" "hostname" 2>> $local_log_file)
+		then
+			LAST_ERROR_INFO="Get hostname from $node failed."
+			add_log "WARNING" "get hostname from $node failed." $print_log
+			continue
+		fi
+		echo -e "${node}\t${hostname}" >> /etc/hosts
+	done
+}
+
+function check_exist_ceph_conf()
+{
+    local ret=0
+    if [ ! -f "$ceph_conf" ] > /dev/null 2>&1
+    then
+        add_log "ERROR" "${ceph_conf} not exist..." yes
+        ret=1
+    fi
+    return $ret
+}
+
+function check_port()
+{
+    if [ "$1" -gt 65535 -o "$1" -lt 1 ]; then
+        add_log "ERROR" "$1 not in (1, 65535)..." yes
+        return 1
+    fi
+    return 0
+}
+
+function cal_pg_num()
+{
+    local pool_size=($(grep -E "osd pool default size =" $ceph_conf | grep -v "#" | awk -F " = " '{print $2}'))
+    local pool_size=${pool_size:-"2"}
+    if ! local osd_num=$(ceph osd stat -f json|jq '.num_osds' 2>&1)
+    then
+        add_log "ERROR" "$ret_err" $print_log
+        LAST_ERROR_INFO="$ret_err"
+        my_exit 1 "$RESULT_ERROR" "$LAST_ERROR_INFO"
+    fi
+
+    local target_pgs_per_osd=$1
+    local data_per=$2
+
+    local tmp_pg_num=$(echo "$target_pgs_per_osd $osd_num $data_per $pool_size"|awk '{printf "%.f\n",($1*$2*$3)/($4*100)}')
+    local tmp_tmp_pg_num1=$(echo "$osd_num $pool_size"|awk '{printf "%.f\n",$1/$2}')
+
+    if [ "$tmp_pg_num" -lt "$tmp_tmp_pg_num1" ]
+    then
+        local tmp_pg_num=$tmp_tmp_pg_num1
+    fi
+
+    local i=1
+    while true
+    do
+        local cur_val=$((2**$i))
+        if [ "$cur_val" -ge "$tmp_pg_num" ]; then
+            local val1=$(($cur_val-$tmp_pg_num))
+            local val2=$(($tmp_pg_num-$((cur_val/2))))
+            if [ "$val1" -ge "$val2" ];then
+                pg_num=$((cur_val/2))
+                pgp_num=$pg_num
+            else
+                pg_num=$cur_val
+                pgp_num=$pg_num
+            fi
+            break
+        fi
+        let "i += 1"
+    done
+
+    [ $pg_num -lt $tmp_tmp_pg_num1 ] && pg_num=$(($pg_num*2)) && pgp_num=$pg_num
+    local res2=$(echo "$tmp_pg_num 0.75"|awk '{printf "%.f\n",$1*$2}')
+    [ $pg_num -lt $res2 ]  && pg_num=$(($pg_num*2)) && pgp_num=$pg_num
+    return 0
+}
+
+function rgw_create_pool()
+{
+    local arr=(".rgw.root"
+    ".rgw.data.root"
+    ".rgw.control"
+    ".rgw.gc"
+    ".rgw.lc"
+    ".rgw.log"
+    ".rgw.usage"
+    ".rgw.users.keys"
+    ".rgw.users.uid"
+    ".rgw.buckets.index"
+    ".rgw.buckets.data")
+
+    local tmp_pool_size=($(grep -E "osd pool default size =" $ceph_conf | grep -v "#" | awk -F " = " '{print $2}'))
+    local pool_size=${1:-"$tmp_pool_size"}
+    local zone=${2:-"default"}
+
+    for i in ${arr[*]}
+    do
+        local data_per="1"
+        [ "$i" == ".rgw.buckets.index" ] && local data_per="13"
+        [ "$i" == ".rgw.buckets.data" ] && local data_per="78"
+
+        cal_pg_num 200 "$data_per"
+        local pg_num=${pg_num:-"256"}
+        local pgp_num=${pgp_num:-"256"}
+
+        [ "$i" == ".rgw.root" ] && local pool_name=".rgw.root" || local pool_name="$zone$i"
+        add_log "INFO" "ceph osd pool create $pool_name $pg_num $pg_num" $print_log
+        if ! res=$(ceph osd pool create "$pool_name" $pg_num $pg_num 2>&1)
+        then
+            add_log "ERROR" "fail to create pool($pool_name), $res" $print_log
+            LAST_ERROR_INFO="fail to create pool($pool_name), $res"
+            return 1
+        fi
+        if [ "$res" == "pool '"$pool_name"' already exists" ]
+        then
+            add_log "WARNING" "$res" $print_log
+            continue
+        fi
+
+        add_log "INFO" "ceph osd pool set $pool_name size $pool_size" $print_log
+        if ! res=$(ceph osd pool set "$pool_name" size $pool_size 2>&1)
+        then
+            add_log "ERROR" "fail to set $pool_name size, $res" $print_log
+            LAST_ERROR_INFO="fail to set $pool_name size, $res"
+            return 1
+        fi
+    done
+
+    local count=300
+    add_log "INFO" "check ceph pg stat" $print_log
+    while [ $count -gt 0 ]
+    do
+        sleep 1
+        if ! res=$(ceph pg stat|grep creating 2>&1)
+        then
+            return 0
+        fi
+        ((count--))
+    done
+    add_log "ERROR" "ceph pg stat, creating, please retry" $print_log
+    return 1
+}
+
+function get_fsid()
+{
+    local find_fsid=
+    if ! find_fsid=$(grep "fsid = " $ceph_conf | awk -F" = " '{print $2}')
+    then
+        LAST_ERROR_INFO="no find fsid in $ceph_conf."
+        add_log "ERROR" "no find fsid in $ceph_conf" $print_log
+        return 1
+    elif [ x"$find_fsid" = x ]
+    then
+        LAST_ERROR_INFO="fsid is empty in $ceph_conf."
+        add_log  "ERROR" "fsid is empty in $ceph_conf" $print_log
+        return 1
+    fi
+    echo $find_fsid
+    return 0
+}
+
+function get_pubnet()
+{
+	local pubnet=
+	if ! pubnet=$(grep "public network = " $ceph_conf | awk -F" = " '{print $2}')
+	then
+		LAST_ERROR_INFO="get 'public network' from $ceph_conf failed."
+		add_log "ERROR" "get 'public network' from $ceph_conf failed" $print_log
+		return 1
+	fi
+	
+	local pubnet_tmp=$(echo $pubnet|awk -F/ '{print $1"."$2}' |awk -F. '{print $1"\."$2"\."$3"\..*""/"$5"$"}')
+	local public_ip=
+	if ! public_ip=$(ip addr ls |awk '{print $2}' |grep "$pubnet_tmp"| awk -F'/' '{print $1}' | head -n 1)
+	then
+		LAST_ERROR_INFO="get ip in ${pubnet} failed."
+		add_log "ERROR" "get ip in ${pubnet} failed" $print_log
+		return 1
+	fi
+	echo $public_ip
+	return 0
+}
+

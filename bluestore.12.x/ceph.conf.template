@@ -1,0 +1,121 @@
+[global]
+	fsid = _FSID_
+	osd objectstore = bluestore
+
+	bluestore default buffered read = true
+
+	rgw_override_bucket_index_max_shards=256
+
+	auth cluster required = none
+	auth service required = none
+	auth client required = none
+
+	filestore xattr use omap = true
+	osd pool default size = 2
+
+	auth supported = none
+	log to syslog = false
+
+	public network = _PUBLIC_NETWORK_
+	cluster network = _CLUSTER_NETWORK_
+
+	filestore merge threshold = 40
+	filestore split multiple = 8
+	osd op threads = 8
+
+	debug_bluefs = 0/0
+	debug_bluestore = 0/0
+	debug_bdev = 0/0
+	debug_lockdep = 0/0
+	debug_context = 0/0
+	debug_crush = 0/0
+	debug_mds = 0/0
+	debug_mds_balancer = 0/0
+	debug_mds_locker = 0/0
+	debug_mds_log = 0/0
+	debug_mds_log_expire = 0/0
+	debug_mds_migrator = 0/0
+	debug_buffer = 0/0
+	debug_timer = 0/0
+	debug_filer = 0/0
+	debug_objecter = 0/0
+	debug_rados = 0/0
+	debug_rbd = 0/0
+	debug_journaler = 0/0
+	debug_objectcacher = 0/0
+	debug_client = 0/0
+	debug_osd = 0/0
+	debug_optracker = 0/0
+	debug_objclass = 0/0
+	debug_filestore = 0/0
+	debug_journal = 0/0
+	debug_ms = 0/0
+	debug_mon = 0/0
+	debug_monc = 0/0
+	debug_paxos = 0/0
+	debug_tp = 0/0
+	debug_auth = 0/0
+	debug_finisher = 0/0
+	debug_heartbeatmap = 0/0
+	debug_perfcounter = 0/0
+	debug_rgw = 0/0
+	debug_hadoop = 0/0
+	debug_asok = 0/0
+	debug_throttle = 0/0
+	debug_rocksdb = 0/0
+	debug_hotplug = 10/10
+
+	osd_op_num_threads_per_shard = 2
+	osd_op_num_shards = 10
+	ms type = async
+	ms tcp rcvbuf = 4194304
+	ms tcp sendbuf = 4194304
+
+	#bluestore_rocksdb_options = "max_write_buffer_number=16,min_write_buffer_number_to_merge=2,recycle_log_file_num=16,compaction_threads=32,flusher_threads=8,max_background_compactions=32,max_background_flushes=8,max_bytes_for_level_base=5368709120,write_buffer_size=83886080,level0_file_num_compaction_trigger=4,level0_slowdown_writes_trigger=400,level0_stop_writes_trigger=800"
+
+	bluestore_shard_finishers = true
+	bluestore_csum_type = none
+	bluefs_buffered_io = false
+	bluestore_max_ops = 30000
+	bluestore_max_bytes = 629145600
+	bluestore_block_wal_size = 0
+
+	mon compact on trim = false
+	osd pg bits = 8
+	osd pgp bits = 8
+	osd pool default pg num = 256
+	osd pool default pgp num = 256
+	mon pg warn max object skew = 100000
+	mon pg warn min per osd = 0
+	mon pg warn max per osd = 32768
+	mon clock drift allowed = 2
+	mon clock drift warn backoff = 30
+	mon osd min in ratio = 0.62
+
+	osd_crush_chooseleaf_type = 1
+
+	rbd op threads = 3
+	rbd cache = false
+	rbd cache max dirty = 0
+	rbd readahead max bytes = 0
+	mon_osd_adjust_heartbeat_grace = false
+	mon_allow_pool_delete=true
+	log_to_stderr = false
+	err_to_stderr = false
+[mon]
+	#mon initial members = _MON_INITIAL_MEMBERS_
+[mgr]
+	mgr modules = restful fsstatus dashboard
+	mgr data = /var/lib/ceph/mgr/mgr.$id
+	#mgr module path = /usr/local/lib/x86_64-linux-gnu/ceph/mgr
+[osd]
+	objecter_inflight_ops=102400
+	ms_dispatch_throttle_bytes=1048576000
+	objecter_infilght_op_bytes=1048576000
+	osd_client_message_size_cap = 0
+	osd_client_message_cap = 0
+	osd_enable_op_tracker = false
+	rocksdb_cache_size = 1073741824
+
+[client]
+	admin socket = /var/run/ceph/$cluster-$type.$id.$pid.$cctid.asok
