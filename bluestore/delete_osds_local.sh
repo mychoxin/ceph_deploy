@@ -143,7 +143,7 @@ function remove_osds()
 		add_log "INFO" "remove_one_osd id=$num wait=$remove_wait"
 		remove_one_osd $num $remove_wait
 
-		local osd_data="${osd_data_dir}/osd-device-${osd_id}-data"
+		local osd_data="${osd_data_dir}/osd-device-${num}-data"
 		if [ -d "$osd_data" ]
 		then
 			add_log "INFO" "deleting ${osd_data}..."

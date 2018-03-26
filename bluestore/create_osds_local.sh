@@ -2,8 +2,8 @@
 
 head_reverse_size=10
 tail_reverse_size=$((10*1024))
-wal_part_size=$((2*1024))
-db_part_size=$((8*1024))
+wal_part_size=$((10*1024))
+db_part_size=$((10*1024))
 block_part_min_size=$((4*1024))
 
 #using in VM
@@ -174,7 +174,7 @@ function prepare_disk()
 		fi
 
 		#now $size is each osd size
-		my_parted $dev "head-reverse-part" 0M ${head_reverse_size}M || return 1
+		#my_parted $dev "head-reverse-part" 0M ${head_reverse_size}M || return 1
 		for((i=0; i<$osd_num_in_each_disk; ++i))
 		do
 			local osd_id=${arr_all_osd_id[$n]}
@@ -226,7 +226,10 @@ function write_ceph_conf()
 	do
 		local osd_id=${arr_all_osd_id[$i]}
 		local data_dir="${osd_data_dir}/osd-device-${osd_id}-data"
-		local wal_path="$part_path/osd-device-${osd_id}-wal"
+		#local wal_path="$part_path/osd-device-${osd_id}-wal"
+		local wal_path="/dev/shm/ceph-$osd_id-wal/"
+		mkdir -p $wal_path
+		wal_path="$wal_path/wak.file"
 		local db_path="$part_path/osd-device-${osd_id}-db"
 		local block_path="$part_path/osd-device-${osd_id}-block"
 
@@ -358,7 +361,7 @@ create_osd_ids || my_exit 1 "$RESULT_ERROR" "$LAST_ERROR_INFO" $format
 
 if ! prepare_disk
 then
-	rollback_osds
+	#rollback_osds
 	my_exit 1 "$RESULT_ERROR" "$LAST_ERROR_INFO" $format
 fi
 
@@ -366,7 +369,7 @@ write_ceph_conf
 
 if ! create_osd
 then
-	rollback
+	#rollback
 	my_exit 1 "$RESULT_ERROR" "$LAST_ERROR_INFO" $format
 else
 	#check_status || :

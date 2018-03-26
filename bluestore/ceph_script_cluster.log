@@ -1,0 +1,5 @@
+
+[03/26 17:51:24] INFO deph-testebs-ssd012.py: local deleting monitor...
+[03/26 17:51:24] INFO ./delete_monitor_local.sh 
+[03/26 17:51:25] ERROR find monitor line number failed
+[03/26 17:51:25] ERROR delete monitor deph-testebs-ssd012.py failed

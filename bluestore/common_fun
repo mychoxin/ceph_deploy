@@ -18,7 +18,7 @@ mon_dir=$ceph_dir/mon
 conf_dir=/etc/ceph
 ceph_conf=$conf_dir/ceph.conf
 tmp_dir=/tmp3
-user="wanjun.lp"
+user="root"
 remote_tmp_dir=$tmp_dir/create_cluster
 sudo mkdir -p $remote_tmp_dir
 sudo chown $user $remote_tmp_dir
@@ -37,7 +37,7 @@ print_log=${print_log:-"yes"}
 SSH=my_ssh
 SCP=my_scp
 
-osd_dev="nvme"
+osd_dev="sd[c-e]"
 #VM test
 #use /dev/sdb, /dev/sdc, /dev/sdd
 #osd_dev="sd[b-d]"
@@ -127,6 +127,7 @@ function is_mounted()
 
 function is_active_clean()
 {
+	return 0
 	local pg_status
 	local pg_count=$(ceph pg stat|awk '{print $2}')
 	if [ x"$pg_count" = x0 ]
@@ -244,11 +245,11 @@ function remove_one_osd()
 
 	#reweight the osd
 	ceph osd crush reweight osd.$osd_id 0 &> /dev/null || :
-	[ $retry_times -ne 0 ] && sleep 2 && waiting_for_active_clean
+	#[ $retry_times -ne 0 ] && sleep 2 && waiting_for_active_clean
 
 	#out the osd
 	ceph osd out osd.$osd_id &> /dev/null || :
-	[ $retry_times -ne 0 ] && sleep 2 && waiting_for_active_clean
+	#[ $retry_times -ne 0 ] && sleep 2 && waiting_for_active_clean
 
 	#down the osd
 	#try to kill the the daemon many times gracefully, if failed then kill it use '-9' roughly
@@ -746,6 +747,7 @@ function remote_mkdir()
 #1st param: /dev/XXX
 function is_device_used()
 {
+return 0
 	local dev=$1
 	local hostname=$(hostname)
 
@@ -867,6 +869,7 @@ function remote_clear_node()
 
 function check_only_one_mon_node()
 {
+return 0
 	local arr_conf_node=($(awk -F" = " '/\[mon..*\]/{a=1}a==1&&$1=="\tmon host"{print $2; a=0}' $ceph_conf))
 	if [ ${#arr_conf_node[@]} -eq 1 ]
 	then
@@ -880,6 +883,7 @@ function check_only_one_mon_node()
 
 function check_only_one_osd_node()
 {
+return 0
 	local arr_conf_node=($(awk -F" = " '/\[osd..*\]/{a=1}a==1&&$1=="\thost"{print $2; a=0}' $ceph_conf))
 	if [ ${#arr_conf_node[@]} -eq 1 ]
 	then
