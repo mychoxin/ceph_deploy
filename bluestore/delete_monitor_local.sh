@@ -50,7 +50,7 @@ done
 
 function parse_and_check_params()
 {
-	check_only_one_mon_node || return 1
+	#check_only_one_mon_node || return 1
 
 	if [ $need_ensure_flag -eq 1 ]
 	then
@@ -98,15 +98,15 @@ function modify_conf()
 
 function remove_monitor()
 {
-	if ! ret_err=$(ceph mon remove $mon_id 2>&1)
-	then
-		LAST_ERROR_INFO="$ret_err"
-		add_log "ERROR" "remove mon id failed. $ret_err" $print_log
-		if ! echo "$ret_err" | grep "there will be 1 monitors" &> /dev/null
-		then
-			return 1
-		fi
-	fi
+	#if ! ret_err=$(ceph mon remove $mon_id 2>&1)
+	#then
+	#	LAST_ERROR_INFO="$ret_err"
+	#	add_log "ERROR" "remove mon id failed. $ret_err" $print_log
+	#	if ! echo "$ret_err" | grep "there will be 1 monitors" &> /dev/null
+	#	then
+	#		return 1
+	#	fi
+	#fi
 
 	if ! ret_err=$(kill `pidof ceph-mon` 2>&1)
 	then

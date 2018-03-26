@@ -18,7 +18,7 @@ mon_dir=$ceph_dir/mon
 conf_dir=/etc/ceph
 ceph_conf=$conf_dir/ceph.conf
 tmp_dir=/tmp3
-user="wanjun.lp"
+user="root"
 remote_tmp_dir=$tmp_dir/create_cluster
 sudo mkdir -p $remote_tmp_dir
 sudo chown $user $remote_tmp_dir
@@ -37,7 +37,7 @@ print_log=${print_log:-"yes"}
 SSH=my_ssh
 SCP=my_scp
 
-osd_dev="nvme"
+osd_dev="md[1-6]"
 #VM test
 #use /dev/sdb, /dev/sdc, /dev/sdd
 #osd_dev="sd[b-d]"
@@ -243,34 +243,34 @@ function remove_one_osd()
 	local try_cnt=$2
 
 	#reweight the osd
-	ceph osd crush reweight osd.$osd_id 0 &> /dev/null || :
-	[ $retry_times -ne 0 ] && sleep 2 && waiting_for_active_clean
+	#ceph osd crush reweight osd.$osd_id 0 &> /dev/null || :
+	#[ $retry_times -ne 0 ] && sleep 2 && waiting_for_active_clean
 
-	#out the osd
-	ceph osd out osd.$osd_id &> /dev/null || :
-	[ $retry_times -ne 0 ] && sleep 2 && waiting_for_active_clean
+	##out the osd
+	#ceph osd out osd.$osd_id &> /dev/null || :
+	#[ $retry_times -ne 0 ] && sleep 2 && waiting_for_active_clean
 
-	#down the osd
-	#try to kill the the daemon many times gracefully, if failed then kill it use '-9' roughly
-	#this is avoid to umount fails
-	sudo kill `ps aux |grep -w "ceph-osd -i $osd_id"|grep -vw grep|awk '{print $2}'` 2>/dev/null || :
-	ps=$(echo `ps aux|grep -w "ceph-osd -i $osd_id"|grep -vw grep`)
-	while [ x"$ps" != x ]
-	do
-		if [ $try_cnt -le 1 ]
-		then
-			sudo kill -9 `ps uax |grep -w "ceph-osd -i $osd_id"|grep -vw grep|awk '{print $2}'` 2>/dev/null || :
-			add_log "WARNING" "after trying $((retry_times+1)) times, osd.$osd_id was killed by kill -9" $print_log
-			break
-		fi
-		((try_cnt--))
-		if [ `echo $try_cnt%5|bc` -eq 0 ]
-		then
-			[ x"$print_log" = x"yes" ] && ps aux |grep -w "ceph-osd -i $osd_id"|grep -vw grep || :
-		fi
-		sleep 1
-		ps=$(echo `ps aux |grep -w "ceph-osd -i $osd_id"|grep -vw grep || :`)
-	done
+	##down the osd
+	##try to kill the the daemon many times gracefully, if failed then kill it use '-9' roughly
+	##this is avoid to umount fails
+	#sudo kill `ps aux |grep -w "ceph-osd -i $osd_id"|grep -vw grep|awk '{print $2}'` 2>/dev/null || :
+	#ps=$(echo `ps aux|grep -w "ceph-osd -i $osd_id"|grep -vw grep`)
+	#while [ x"$ps" != x ]
+	#do
+	#	if [ $try_cnt -le 1 ]
+	#	then
+	#		sudo kill -9 `ps uax |grep -w "ceph-osd -i $osd_id"|grep -vw grep|awk '{print $2}'` 2>/dev/null || :
+	#		add_log "WARNING" "after trying $((retry_times+1)) times, osd.$osd_id was killed by kill -9" $print_log
+	#		break
+	#	fi
+	#	((try_cnt--))
+	#	if [ `echo $try_cnt%5|bc` -eq 0 ]
+	#	then
+	#		[ x"$print_log" = x"yes" ] && ps aux |grep -w "ceph-osd -i $osd_id"|grep -vw grep || :
+	#	fi
+	#	sleep 1
+	#	ps=$(echo `ps aux |grep -w "ceph-osd -i $osd_id"|grep -vw grep || :`)
+	#done
 
 	ceph osd crush remove osd.$osd_id &> /dev/null || :
 	ceph auth del osd.$osd_id &> /dev/null || :
@@ -330,7 +330,8 @@ set_lib_path
 function get_all_nvme_dev()
 {
 	local nvme_devs=
-	if nvme_devs=$(lsblk -nd | awk '{print "/dev/"$1}'| grep -E "$osd_dev" 2>&1)
+	#if nvme_devs=$(lsblk -nd | awk '{print "/dev/"$1}'| grep -E "$osd_dev" 2>&1)
+	if nvme_devs=$(ls /dev/$osd_dev 2>&1)
 	then
 		echo $nvme_devs
 		return 0
@@ -746,6 +747,7 @@ function remote_mkdir()
 #1st param: /dev/XXX
 function is_device_used()
 {
+        #return 0
 	local dev=$1
 	local hostname=$(hostname)
 
@@ -761,14 +763,18 @@ function is_device_used()
 
 	local block_part=($(parted $dev -s print |awk '
 		/osd-device-.*-block/{print $0}'|awk '{print "/dev/disk/by-partlabel/"$NF}'))
-	if [ x"$block_part" = x ]
-	then
-		return 1
-	fi
+	#if [ x"$block_part" = x ]
+	#then
+	#	return 1
+	#fi
 
 	for part in ${arr_conf_part[@]}
 	do
 		if [ x"$part" = x"$block_part" ]
+		then
+			add_log "INFO" "found $part in $ceph_conf"
+			return 0
+		elif [ x"$part" = x"${dev}p3" ]
 		then
 			add_log "INFO" "found $part in $ceph_conf"
 			return 0

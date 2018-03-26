@@ -65,7 +65,7 @@ function parse_and_check_params()
 		data_disks_total_count=${#arr_all_data_disks[@]}
 	fi
 
-	osd_ids=()
+	osd_ids=(0 1 2 3 4 5)
 	local k=0
 	local ret=0
 	for((i=0; i<$data_disks_total_count; ++i))
@@ -99,7 +99,7 @@ function parse_and_check_params()
 			continue
 		fi
 
-		local block_part=(`parted $dev -s print |awk '/osd-device-.*-block/{print $0}'|awk '{print "/dev/disk/by-partlabel/"$NF}'`)
+		local block_part=(`parted $dev -s print |awk '/osd-device-.*-block/{print $0}'|awk '{print "'"${dev}p3"'"}'`)
 
 		add_log "INFO" "$dev wal-part=${block_part[*]}"
 
@@ -207,10 +207,12 @@ then
 	my_exit 1 "$RESULT_ERROR" "$LAST_ERROR_INFO" 0
 fi
 
-check_health || :
+#check_health || :
 
 #start deleting
+set -x
 remove_osds
+set +x
 
 clear_disks
 modify_conf
