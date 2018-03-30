@@ -227,9 +227,14 @@ function write_ceph_conf()
 		local osd_id=${arr_all_osd_id[$i]}
 		local data_dir="${osd_data_dir}/osd-device-${osd_id}-data"
 		#local wal_path="$part_path/osd-device-${osd_id}-wal"
-		local wal_path="/dev/shm/ceph-$osd_id-wal/"
-		mkdir -p $wal_path
-		wal_path="$wal_path/wak.file"
+		local wal_path="$part_path/ceph-${osd_id}-wal"
+		#local wal_path="/dev/shm/ceph-$osd_id-wal/"
+		#mkdir -p $wal_path
+
+		#mkdir -p $data_dir
+		#wal_path="$wal_path/wal.file"
+		#local wal_path="/dev/loop$osd_id"
+		#touch $wal_path || :
 		local db_path="$part_path/osd-device-${osd_id}-db"
 		local block_path="$part_path/osd-device-${osd_id}-block"
 
@@ -271,6 +276,7 @@ function create_osd()
 		mkdir -p $osd_dir
 		#[ x"$osd_dir" != x ] && rm -fr $osd_dir/*
 		local ret_err=
+#break
 		if ! ret_err=$(sudo ceph-osd -i $osd_id --mkfs --mkkey 2>&1)
 		then
 			LAST_ERROR_INFO="$ret_err"

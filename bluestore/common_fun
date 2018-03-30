@@ -37,7 +37,8 @@ print_log=${print_log:-"yes"}
 SSH=my_ssh
 SCP=my_scp
 
-osd_dev="sd[c-e]"
+osd_dev="sd[e-n]"
+#osd_dev="sdc"
 #VM test
 #use /dev/sdb, /dev/sdc, /dev/sdd
 #osd_dev="sd[b-d]"
@@ -747,7 +748,7 @@ function remote_mkdir()
 #1st param: /dev/XXX
 function is_device_used()
 {
-return 0
+#return 0
 	local dev=$1
 	local hostname=$(hostname)
 
